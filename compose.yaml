@@ -1,7 +1,7 @@
 # Sample deployment config for the hydra web editor.
 # Copy to your server and run: docker compose up -d
 #
-# The image is public on GHCR once the package visibility is set;
+# The images are public on GHCR once the package visibility is set;
 # otherwise `docker login ghcr.io` first with a token that has read:packages.
 
 services:
@@ -15,3 +15,18 @@ services:
     ports:
       # host:container — serve on http://<server>:8080
       - "8080:8080"
+
+  # WebSocket relay for the remote VJ deck (tablet/laptop controlling this
+  # instance). nginx inside `hydra` proxies /ws here — no extra published
+  # port, and any TLS proxy in front only ever talks to :8080.
+  relay:
+    image: ghcr.io/v3djg6gl/hydra-relay:latest
+    container_name: hydra-relay
+    restart: unless-stopped
+    volumes:
+      # per-room scene banks survive restarts (and kiosk browsers that wipe
+      # localStorage)
+      - relay-data:/data
+
+volumes:
+  relay-data:

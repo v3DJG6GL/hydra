@@ -31,7 +31,8 @@
     "shortid": "^2.2.16",
     "simple-peer": "^9.11.0",
     "socket.io-client": "^2.3.0",
-    "superagent": "^7.0.1"
+    "superagent": "^7.0.1",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "browserify": "^17.0.0",

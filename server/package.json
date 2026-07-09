@@ -1,0 +1,13 @@
+{
+  "name": "hydra-vj-relay",
+  "private": true,
+  "description": "WebSocket relay sidecar for the remote VJ deck",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
