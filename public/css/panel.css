@@ -1107,6 +1107,16 @@
   .vj-pp { width: 30px; height: 30px; margin-top: 4px; }
   .vj-chip-menubtn { padding: 6px 10px; }
   .vj-menu-item { padding: 10px 12px; }
+  /* remote decks are primarily touch surfaces — everything tappable ≥ ~34px */
+  .vj-railbtn { min-width: 40px; min-height: 34px; }
+  .vj-hush, .vj-fft { min-height: 34px; padding-left: 12px; padding-right: 12px; }
+  .vj-scene { min-width: 64px; min-height: 44px; }
+  .vj-scenetool { min-width: 38px; min-height: 34px; }
+  .vj-seq-cell, .vj-seq-add { min-width: 34px; min-height: 34px; }
+  .vj-refselect { min-height: 32px; }
+  .vj-source-remove, .vj-strip-kill, .vj-audio-unbind { min-width: 34px; min-height: 30px; }
+  .vj-expr-freeze { min-width: 34px; }
+  .vj-newchain { min-height: 36px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

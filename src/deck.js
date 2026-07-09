@@ -73,6 +73,19 @@ function showPairScreen(error) {
         here.textContent = 'open the deck in this window'
         here.onclick = () => { location.hash = 'room=' + localRoom + '&token=' + localToken; location.reload() }
         box.appendChild(here)
+        const rot = document.createElement('button')
+        rot.className = 'vj-pair-connect vj-pair-rotate'
+        rot.textContent = 'rotate pairing (log out all decks)'
+        rot.title = 'forget these credentials; the renderer generates fresh ones on its next reload'
+        rot.onclick = () => {
+            if (!confirm('Invalidate this pairing? Every connected deck loses control until re-paired, and the hydra tab must be reloaded.')) return
+            try {
+                localStorage.removeItem('hydra-vj-room')
+                localStorage.removeItem('hydra-vj-token')
+            } catch (e) { /* private mode */ }
+            location.reload()
+        }
+        box.appendChild(rot)
         renderQr(qr, url)
     } else {
         const p = document.createElement('p')
@@ -116,6 +129,38 @@ function boot({ room, token }) {
         hydra: null
     }
     const host = new RemoteHost({ url: relayUrl(), room, token })
+    // "pair another device": this deck shows its own pairing as a QR overlay
+    host.requestPairUi = () => {
+        const overlay = document.createElement('div')
+        overlay.className = 'vj-remote-pair'
+        const box = document.createElement('div')
+        box.className = 'vj-pair-box'
+        const h = document.createElement('h1')
+        h.textContent = 'pair another device'
+        box.appendChild(h)
+        const p = document.createElement('p')
+        p.textContent = 'Scan on the new device. The link carries full control of the renderer — keep it off the projector.'
+        box.appendChild(p)
+        const url = deckUrl(location.origin, room, token)
+        const qr = document.createElement('div')
+        qr.className = 'vj-pair-qr'
+        box.appendChild(qr)
+        const link = document.createElement('input')
+        link.className = 'vj-pair-url'
+        link.readOnly = true
+        link.value = url
+        link.onclick = () => { link.select(); try { navigator.clipboard.writeText(url) } catch (e) {} }
+        box.appendChild(link)
+        const close = document.createElement('button')
+        close.className = 'vj-pair-connect'
+        close.textContent = 'close'
+        close.onclick = () => overlay.remove()
+        box.appendChild(close)
+        overlay.appendChild(box)
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove() }
+        document.body.appendChild(overlay)
+        renderQr(qr, url)
+    }
     const panel = new VJPanel(state, () => {}, host)
     panel.remoteRoot = rootEl
     panel.attachSceneKeys(document)

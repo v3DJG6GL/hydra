@@ -784,6 +784,16 @@ export default class VJPanel {
         const spacer = el(d, 'div', 'vj-spacer')
         rail.appendChild(spacer)
 
+        // remote decks can enroll further devices: show this pairing as a QR
+        // in an overlay (on the DECK screen — never on the projector)
+        if (this.host.remote && this.host.requestPairUi) {
+            const pair = el(d, 'button', 'vj-railbtn')
+            pair.appendChild(el(d, 'i', 'fas fa-qrcode'))
+            pair.title = this.tr('panel.pair', 'pair another device — shows this deck’s link as a QR code')
+            pair.onclick = () => this.host.requestPairUi()
+            rail.appendChild(pair)
+        }
+
         if (!isAux) {
             const pop = el(d, 'button', 'vj-railbtn')
             pop.appendChild(el(d, 'i', 'fas fa-external-link-alt'))
