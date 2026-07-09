@@ -486,6 +486,14 @@ export default class VJPanel {
 
     renderInto(root) {
         const d = root.ownerDocument
+        // every committed edit rebuilds this DOM from scratch — carry the
+        // scroll offsets across the wipe so a value tweak deep in a long
+        // chain doesn't fling the strip back to its start. index-keyed by
+        // document order: exact for value edits (structure unchanged),
+        // best-effort when a strip is added or removed
+        const scrollables = '.vj-body, .vj-chips, .vj-scenes'
+        const scrolled = Array.from(root.querySelectorAll(scrollables))
+            .map((n) => ({ left: n.scrollLeft, top: n.scrollTop }))
         root.textContent = ''
         root.appendChild(this.renderToprail(d, root))
         root.appendChild(this.renderScenes(d))
@@ -530,6 +538,12 @@ export default class VJPanel {
         } else {
             root.classList.remove('vj-out-of-sync')
         }
+        root.querySelectorAll(scrollables).forEach((n, i) => {
+            const s = scrolled[i]
+            if (!s) return
+            if (s.left) n.scrollLeft = s.left
+            if (s.top) n.scrollTop = s.top
+        })
     }
 
     renderToprail(d, root) {
