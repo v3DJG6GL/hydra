@@ -307,6 +307,39 @@ export default class VJPanel {
             this.focusPopup()
             return
         }
+        // preferred pop-out: the self-contained deck page. It carries its
+        // pairing in the URL, so it survives reloads, can be bookmarked, and
+        // the very same link works on a tablet. Falls back to the legacy
+        // same-context popup when no relay is reachable (static hosting).
+        const r = this.state.vjRemote
+        if (r && r.connected) {
+            const win = window.open(
+                'deck.html#room=' + encodeURIComponent(r.room) + '&token=' + encodeURIComponent(r.token),
+                '_blank')
+            if (!win) {
+                if (window._reportError) {
+                    window._reportError(new Error('could not open the deck tab (popup blocked?) — allow popups for this site and try again'))
+                }
+                return
+            }
+            this.popupWin = win
+            this.popupRoot = null // independent page — it renders itself
+            this.state.panel.popup = true
+            this.state.panel.open = true
+            this.renderAll()
+            this.emit('render')
+            clearInterval(this._closePoll)
+            this._closePoll = setInterval(() => {
+                if (!this.popupWin || this.popupWin.closed) {
+                    clearInterval(this._closePoll)
+                    this.popupWin = null
+                    this.state.panel.popup = false
+                    this.renderAll()
+                    this.emit('render')
+                }
+            }, 400)
+            return
+        }
         const win = openPopup()
         if (!win) {
             if (window._reportError) {
@@ -797,9 +830,18 @@ export default class VJPanel {
         if (!isAux) {
             const pop = el(d, 'button', 'vj-railbtn')
             pop.appendChild(el(d, 'i', 'fas fa-external-link-alt'))
-            pop.title = this.tr('panel.pop-out', 'open deck in a new tab (drag it out for a second screen; visuals pause while the hydra tab is hidden)')
+            pop.title = this.tr('panel.pop-out', 'open deck in its own tab — reload-proof, and its URL works on any device on the network')
             pop.onclick = () => this.emit('panel: popout')
             rail.appendChild(pop)
+
+            // pairing page for other devices (tablet / phone / laptop)
+            if (this.state.vjRemote) {
+                const pairPage = el(d, 'button', 'vj-railbtn')
+                pairPage.appendChild(el(d, 'i', 'fas fa-qrcode'))
+                pairPage.title = this.tr('panel.pair-page', 'pair a tablet / phone: opens the pairing page with QR code + deck link (keep it off the projector)')
+                pairPage.onclick = () => window.open('deck.html', '_blank')
+                rail.appendChild(pairPage)
+            }
 
             if (window.documentPictureInPicture) {
                 const pip = el(d, 'button', 'vj-railbtn')

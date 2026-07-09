@@ -1154,25 +1154,25 @@
   transition: height 90ms linear;
 }
 
-/* deck page (deck.html) — the panel fills the viewport */
+/* deck page (deck.html) — status bar on top, the panel fills the rest.
+   The bar takes layout space (no overlaying the toprail). */
 .vj-remote-body {
   margin: 0;
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
   background: #0b0b10;
 }
 .vj-remote-body #vj-remote-root {
-  position: fixed;
-  inset: 0;
+  flex: 1;
+  min-height: 0;
+  height: auto;
   overflow-y: auto;
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
 .vj-remote-status {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 60;
+  flex: none;
   padding: 4px 10px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px;
@@ -1182,7 +1182,7 @@
 }
 .vj-remote-status.vj-st-down { background: #3d0f16; color: #ff7a8a; }
 .vj-remote-status.vj-st-wait { background: #3d2f0f; color: #ffd37a; }
-.vj-remote-status.vj-st-up { background: transparent; color: #6fff9f; text-align: right; }
+.vj-remote-status.vj-st-up { background: #10241a; color: #6fff9f; }
 .vj-remote-status[hidden] { display: none; }
 
 .vj-remote-toasts {

@@ -25,10 +25,11 @@ The design behind all of this is in [remote-deck-plan.md](remote-deck-plan.md).
 
 ## Pairing
 
-1. On the machine that runs the visuals (or any browser that has run them —
-   the pairing lives in that browser's localStorage), open
-   `https://<origin>/deck.html`. This is the **pairing screen**: it shows a
-   QR code and the full deck URL.
+1. On the machine that runs the visuals, click the **QR button** in the VJ
+   deck's top rail (next to the pop-out button) — or open
+   `https://<origin>/deck.html` directly in any browser that has run the
+   renderer (the pairing lives in that browser's localStorage). This is the
+   **pairing screen**: it shows a QR code and the full deck URL.
 2. Scan the QR (or open the URL) on the tablet/laptop. Done.
 3. From a running deck, the QR-code button in the top rail shows the same
    pairing to enroll further devices.
