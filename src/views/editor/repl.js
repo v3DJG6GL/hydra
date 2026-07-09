@@ -1,4 +1,5 @@
 import { log } from './log.js'
+import { restoreAudioGlobal } from '../../lib/restore-audio.js'
 
 export default {
   eval: (arg, callback) => {
@@ -21,6 +22,7 @@ export default {
       log(e.message, "log-error")
       //console.log('ERROR', JSON.stringify(e))
     }
+    restoreAudioGlobal()
   //  console.log('callback is', callback)
     if(callback) callback(jsString, isError)
   }

@@ -124,6 +124,13 @@ export default class VJPanel {
         return node.closest('.vj-panel') || this.dockRoot
     }
 
+    // the synth's own audio reference — survives sketches that assign to the
+    // bare global `a` (repl restores the global too, but don't depend on it)
+    audio() {
+        const h = window.hydraSynth
+        return (h && h.synth && h.synth.a) || window.a || null
+    }
+
     // direct DOM readout update for MIDI-driven params (no re-render per message)
     flashParamValue(path, value) {
         const sel = `[data-path="${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"] .vj-value`
@@ -558,8 +565,10 @@ export default class VJPanel {
         const fft = el(d, 'button', 'vj-fft' + (this.fftShown ? ' vj-on' : ''), '∿ FFT')
         fft.title = this.tr('panel.fft', 'toggle the audio FFT monitor — right-click adds audio settings to the sketch')
         fft.onclick = () => {
+            const audio = this.audio()
+            if (!audio || typeof audio.show !== 'function') return
             this.fftShown = !this.fftShown
-            this.emit('repl: eval', `if (typeof a !== 'undefined') a.${this.fftShown ? 'show' : 'hide'}()`)
+            try { this.fftShown ? audio.show() : audio.hide() } catch (e) { /* audio not ready */ }
             fft.classList.toggle('vj-on', this.fftShown)
         }
         fft.oncontextmenu = (e) => {
@@ -568,12 +577,13 @@ export default class VJPanel {
         }
         rail.appendChild(fft)
 
-        // stage view: drop the code/console/toolbar overlay, keep visuals + deck
-        const codeBtn = el(d, 'button', 'vj-fft vj-codebtn' + (this.state.showCode === false ? ' vj-on' : ''), 'CODE')
+        // stage view: drop the code/console/toolbar overlay, keep visuals + deck.
+        // lit = code visible, matching the FFT button (lit = monitor visible)
+        const codeBtn = el(d, 'button', 'vj-fft vj-codebtn' + (this.state.showCode !== false ? ' vj-on' : ''), 'CODE')
         codeBtn.title = this.tr('panel.hide-code', 'show/hide the code overlay (visuals and deck stay)')
         codeBtn.onclick = () => {
             this.emit('ui: toggle code')
-            codeBtn.classList.toggle('vj-on', this.state.showCode === false)
+            codeBtn.classList.toggle('vj-on', this.state.showCode !== false)
         }
         rail.appendChild(codeBtn)
 
@@ -688,7 +698,8 @@ export default class VJPanel {
             live: (v) => {
                 current = norm(v)
                 valueEl.textContent = fmtShort(current)
-                if (window.a) try { window.a[stmt.fn](current) } catch (e) { /* audio not ready */ }
+                const audio = this.audio()
+                if (audio && typeof audio[stmt.fn] === 'function') try { audio[stmt.fn](current) } catch (e) { /* audio not ready */ }
             },
             commit: (v) => this.applyQuiet(edits.setNumber(stmt.arg, norm(v)))
         })
@@ -696,7 +707,8 @@ export default class VJPanel {
             get: () => current,
             set: (v) => {
                 current = norm(v)
-                if (window.a) try { window.a[stmt.fn](current) } catch (e) { /* audio not ready */ }
+                const audio = this.audio()
+                if (audio && typeof audio[stmt.fn] === 'function') try { audio[stmt.fn](current) } catch (e) { /* audio not ready */ }
                 this.applyQuiet(edits.setNumber(stmt.arg, current))
             }
         })

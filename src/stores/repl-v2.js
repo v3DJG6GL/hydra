@@ -1,3 +1,5 @@
+import { restoreAudioGlobal } from '../lib/restore-audio.js'
+
 export default {
   eval: (arg, callback = () => {}) => {
     const info = {
@@ -15,6 +17,7 @@ export default {
     } catch (err) {
       info.errorMessage = err.message
     }
+    restoreAudioGlobal()
     info.codeString = jsString
     if (info.errorMessage.length > 0) info.isError = true
     callback(info)
