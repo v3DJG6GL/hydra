@@ -7,7 +7,9 @@ const keymap = {
     'Shift-Ctrl-f': 'editor: format code',
     'Shift-Ctrl-l': 'gallery:saveToURL',
     'Shift-Ctrl-h': 'ui: hide all',
-    'Shift-Ctrl-s': 'screencap'
+    'Shift-Ctrl-s': 'screencap',
+    'Shift-Ctrl-e': 'gallery:showExample',
+    'Shift-Ctrl-x': 'editor: randomize'
 }
 
 export default (emit) => {

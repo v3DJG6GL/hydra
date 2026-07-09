@@ -7,5 +7,7 @@ export default {
     'Shift-Ctrl-F': 'editor: format code',
     'Shift-Ctrl-L': 'gallery:saveToURL',
     'Shift-Ctrl-H': 'ui: hide all',
-    'Shift-Ctrl-S': 'screencap'
+    'Shift-Ctrl-S': 'screencap',
+    'Shift-Ctrl-E': 'gallery:showExample',
+    'Shift-Ctrl-X': 'editor: randomize'
 }
