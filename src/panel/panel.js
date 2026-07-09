@@ -88,6 +88,21 @@ export default class VJPanel {
         return applyQuietEdit(this.ctx(), edit)
     }
 
+    // Every deck edit is a CodeMirror buffer splice, so undo/redo simply step
+    // the shared editor history and re-evaluate the result. Deck and editor
+    // changes form one timeline — undoing past a manual code edit is intended.
+    historyStep(dir) {
+        const cm = this.cm
+        if (!cm) return
+        const size = cm.historySize()
+        if (!(dir === 'undo' ? size.undo : size.redo)) return
+        dir === 'undo' ? cm.undo() : cm.redo()
+        const code = cm.getValue()
+        this.emit('repl: eval', code)
+        this.emit('gallery: save to URL', code, { replace: true })
+        this.rebuild()
+    }
+
     rebuild() {
         const cm = this.cm
         if (!cm) return
@@ -472,16 +487,22 @@ export default class VJPanel {
         this.recallScene(next !== undefined ? next : filled[0], { replaceURL: true })
     }
 
-    // keys 1-8 recall, shift+1-8 save — only while the deck (dock or popup) has focus
+    // deck-focus keys: 1-8 recall / shift+1-8 save scenes, ctrl+z / ctrl+shift+z
+    // (or ctrl+y) undo/redo — only while the deck (dock or popup) has focus
     attachSceneKeys(target) {
         if (!target || target.__vjSceneKeys) return
         target.__vjSceneKeys = true
         target.addEventListener('keydown', (e) => {
+            const tag = e.target && e.target.tagName
+            if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+            if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.code === 'KeyZ' || e.code === 'KeyY')) {
+                e.preventDefault()
+                this.historyStep(e.code === 'KeyY' || e.shiftKey ? 'redo' : 'undo')
+                return
+            }
             const m = /^Digit([1-8])$/.exec(e.code)
             if (!m) return
             if (e.ctrlKey || e.altKey || e.metaKey) return
-            const tag = e.target && e.target.tagName
-            if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
             e.preventDefault()
             const i = parseInt(m[1], 10) - 1
             if (e.shiftKey) this.saveScene(i)
@@ -561,6 +582,21 @@ export default class VJPanel {
         hush.title = this.tr('panel.hush', 'stop all outputs (code stays)')
         hush.onclick = () => this.emit('repl: eval', 'hush()')
         rail.appendChild(hush)
+
+        const histSize = this.cm ? this.cm.historySize() : { undo: 0, redo: 0 }
+        const undoBtn = el(d, 'button', 'vj-railbtn')
+        undoBtn.appendChild(el(d, 'i', 'fas fa-undo'))
+        undoBtn.title = this.tr('panel.undo', 'undo the last change (ctrl+z while the deck has focus)')
+        undoBtn.disabled = histSize.undo === 0
+        undoBtn.onclick = () => this.historyStep('undo')
+        rail.appendChild(undoBtn)
+
+        const redoBtn = el(d, 'button', 'vj-railbtn')
+        redoBtn.appendChild(el(d, 'i', 'fas fa-redo'))
+        redoBtn.title = this.tr('panel.redo', 'redo an undone change (ctrl+shift+z / ctrl+y)')
+        redoBtn.disabled = histSize.redo === 0
+        redoBtn.onclick = () => this.historyStep('redo')
+        rail.appendChild(redoBtn)
 
         const fft = el(d, 'button', 'vj-fft' + (this.fftShown ? ' vj-on' : ''), '∿ FFT')
         fft.title = this.tr('panel.fft', 'toggle the audio FFT monitor — right-click adds audio settings to the sketch')

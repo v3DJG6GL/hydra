@@ -138,6 +138,9 @@
 
 .vj-railbtn:hover { color: var(--vj-silkscreen); background: var(--vj-module); }
 
+.vj-railbtn:disabled { opacity: 0.35; }
+.vj-railbtn:disabled:hover { color: var(--vj-dim); background: none; }
+
 /* ---------- scene bank ---------- */
 
 .vj-scenes {
