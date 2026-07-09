@@ -302,12 +302,13 @@ export default class VJPanel {
                 const img = el(d, 'img', 'vj-scene-thumb')
                 img.src = scene.thumb
                 img.alt = ''
+                img.draggable = false // the slot drags as a whole, not the image
                 slot.appendChild(img)
             } else if (scene) {
                 slot.appendChild(el(d, 'span', 'vj-scene-code', scene.code.replace(/\s+/g, ' ').slice(0, 18)))
             }
             slot.title = scene
-                ? this.tr('panel.scene-recall', 'recall scene (key 1-8) — shift+click overwrites, right-click for menu')
+                ? this.tr('panel.scene-recall', 'recall scene (key 1-8) — shift+click overwrites, drag to reorder, right-click for menu')
                 : this.tr('panel.scene-save', 'save current sketch here (shift+1-8) — right-click for menu')
             slot.onclick = (e) => {
                 if (!scene || e.shiftKey) this.saveScene(i)
@@ -317,6 +318,7 @@ export default class VJPanel {
                 e.preventDefault()
                 this.openSceneMenu(d, this.hostRootFor(slot), slot, i, scene)
             }
+            this.attachSceneDrag(slot, i, !!scene)
             strip.appendChild(slot)
         })
 
@@ -324,12 +326,12 @@ export default class VJPanel {
         const exp = el(d, 'button', 'vj-scenetool')
         exp.appendChild(el(d, 'i', 'fas fa-download'))
         exp.title = this.tr('panel.scenes-export', 'export the scene bank as a json file')
-        exp.onclick = () => this.exportScenes()
+        exp.onclick = () => this.exportScenes(d)
         tools.appendChild(exp)
         const imp = el(d, 'button', 'vj-scenetool')
         imp.appendChild(el(d, 'i', 'fas fa-upload'))
         imp.title = this.tr('panel.scenes-import', 'import a scene bank json file (replaces all slots)')
-        imp.onclick = () => this.importScenes()
+        imp.onclick = () => this.importScenes(d)
         tools.appendChild(imp)
         const cyc = el(d, 'button', 'vj-scenetool vj-cycle' + (this.cycle.on ? ' vj-on' : ''))
         cyc.appendChild(el(d, 'i', 'fas ' + (this.cycle.on ? 'fa-stop' : 'fa-play')))
@@ -404,23 +406,37 @@ export default class VJPanel {
         })
     }
 
-    exportScenes() {
+    // export/import create their elements in the DECK's document (dock, popup
+    // or pip): a click in an aux window carries no user activation for the
+    // hidden opener, so a main-document input/anchor would silently do nothing
+
+    exportScenes(d) {
+        const doc = d || document
         const data = JSON.stringify({ app: 'hydra-vj-deck', version: 1, scenes: this.scenes }, null, 2)
         const blob = new Blob([data], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
+        const t = new Date()
+        const p = (n) => String(n).padStart(2, '0')
+        const stamp = `${t.getFullYear()}-${p(t.getMonth() + 1)}-${p(t.getDate())}_${p(t.getHours())}-${p(t.getMinutes())}-${p(t.getSeconds())}`
+        const a = doc.createElement('a')
         a.href = url
-        a.download = 'hydra-scenes.json'
+        a.download = `hydra-scenes-${stamp}.json`
+        a.style.display = 'none'
+        doc.body.appendChild(a) // firefox only downloads from in-document anchors
         a.click()
+        a.remove()
         setTimeout(() => URL.revokeObjectURL(url), 5000)
     }
 
-    importScenes() {
-        const input = document.createElement('input')
+    importScenes(d) {
+        const doc = d || document
+        const input = doc.createElement('input')
         input.type = 'file'
         input.accept = '.json,application/json'
+        input.style.display = 'none'
         input.onchange = () => {
             const file = input.files && input.files[0]
+            input.remove()
             if (!file) return
             const reader = new FileReader()
             reader.onload = () => {
@@ -441,6 +457,10 @@ export default class VJPanel {
             }
             reader.readAsText(file)
         }
+        input.addEventListener('cancel', () => input.remove())
+        // in the document, not detached: a detached file input can be GC'd
+        // while the picker is open and its onchange never fires
+        doc.body.appendChild(input)
         input.click()
     }
 
@@ -478,6 +498,44 @@ export default class VJPanel {
 
     clearScene(i) {
         this.scenes[i] = null
+        saveScenes(this.scenes)
+        this.renderAll()
+    }
+
+    // drag & drop reorder: the dragged scene is re-inserted at the target
+    // slot and everything between shifts. keys 1-8 and midi pads stay bound
+    // to slot positions, so a reorder changes what they recall — same as
+    // import. works across dock/popup/pip since all decks share this instance
+    attachSceneDrag(slot, i, filled) {
+        const TYPE = 'application/x-hydra-scene'
+        if (filled) {
+            slot.draggable = true
+            slot.ondragstart = (e) => {
+                e.dataTransfer.setData(TYPE, String(i))
+                e.dataTransfer.effectAllowed = 'move'
+                slot.classList.add('vj-dragging')
+            }
+            slot.ondragend = () => slot.classList.remove('vj-dragging')
+        }
+        slot.ondragover = (e) => {
+            if (!e.dataTransfer.types.includes(TYPE)) return
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'move'
+            slot.classList.add('vj-dragover')
+        }
+        slot.ondragleave = () => slot.classList.remove('vj-dragover')
+        slot.ondrop = (e) => {
+            e.preventDefault()
+            slot.classList.remove('vj-dragover')
+            const from = parseInt(e.dataTransfer.getData(TYPE), 10)
+            if (isFinite(from)) this.moveScene(from, i)
+        }
+    }
+
+    moveScene(from, to) {
+        if (from === to || from < 0 || from >= SLOT_COUNT || !this.scenes[from]) return
+        const [moved] = this.scenes.splice(from, 1)
+        this.scenes.splice(to, 0, moved)
         saveScenes(this.scenes)
         this.renderAll()
     }

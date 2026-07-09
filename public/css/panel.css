@@ -185,6 +185,16 @@
 .vj-scene:hover { border-color: var(--vj-dim); }
 .vj-scene.vj-filled:hover { border-color: var(--vj-armed); }
 
+/* children must not become drag targets or the dragover class flickers */
+.vj-scene > * { pointer-events: none; }
+.vj-scene.vj-filled { cursor: grab; }
+.vj-scene.vj-dragging { opacity: 0.35; }
+.vj-scene.vj-dragover {
+  border-style: solid;
+  border-color: var(--vj-armed);
+  box-shadow: 0 0 0 1px var(--vj-armed) inset;
+}
+
 .vj-scene-thumb {
   position: absolute;
   inset: 0;

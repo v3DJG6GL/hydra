@@ -58,7 +58,7 @@ export default {
                 'expr-hint': 'live expression — click to edit it in the code',
                 'freeze-expr': 'freeze to its current value — turns into a fader',
                 'raw-hint': 'not chain-editable — click to edit in the code',
-                'scene-recall': 'recall scene (key 1-8) — shift+click overwrites, right-click for menu',
+                'scene-recall': 'recall scene (key 1-8) — shift+click overwrites, drag to reorder, right-click for menu',
                 'scene-save': 'save current sketch here (shift+1-8) — right-click for menu',
                 'scene-clear': 'clear slot',
                 'scenes-export': 'export the scene bank as a json file',
