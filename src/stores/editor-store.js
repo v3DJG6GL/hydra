@@ -2,7 +2,8 @@
 // flash block, flash line, format code
 
 export default function editorStore(state, emitter) {
-    emitter.on('editor: randomize', function (evt) {
+    // evt may be a mouse event (toolbar click) or absent (keyboard shortcut)
+    emitter.on('editor: randomize', function (evt = {}) {
         const editor = state.editor.editor
         if (evt.shiftKey) {
             editor.mutator.doUndo();
