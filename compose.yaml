@@ -12,15 +12,3 @@ services:
     ports:
       # host:container — serve on http://<server>:8080
       - "8080:80"
-
-  # Optional: auto-pull new images pushed by CI and restart the container.
-  # Remove the profile line (or run `docker compose --profile auto-update up -d`)
-  # to enable it.
-  watchtower:
-    image: containrrr/watchtower
-    container_name: watchtower
-    restart: unless-stopped
-    profiles: [auto-update]
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    command: --interval 300 --cleanup hydra
