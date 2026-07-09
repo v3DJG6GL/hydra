@@ -141,6 +141,22 @@
 .vj-railbtn:disabled { opacity: 0.35; }
 .vj-railbtn:disabled:hover { color: var(--vj-dim); background: none; }
 
+/* ---------- live preview (pop-out / pip hosts) ---------- */
+
+.vj-preview {
+  flex: 0 0 auto;
+  background: #000;
+  border-bottom: 1px solid var(--vj-line);
+}
+
+.vj-preview video {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  background: #000;
+}
+
 /* ---------- scene bank ---------- */
 
 .vj-scenes {

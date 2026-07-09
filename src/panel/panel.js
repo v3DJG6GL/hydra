@@ -52,6 +52,9 @@ export default class VJPanel {
         this.outOfSync = false
         this.parseError = null
         this.transforms = getTransforms()
+        let previewPref = null
+        try { previewPref = localStorage.getItem('hydra-vj-preview') } catch (e) { /* private mode */ }
+        this.previewOn = previewPref === '1'
         this.dockRoot = null
         this.popupWin = null
         this.popupRoot = null
@@ -144,6 +147,37 @@ export default class VJPanel {
     audio() {
         const h = window.hydraSynth
         return (h && h.synth && h.synth.a) || window.a || null
+    }
+
+    // hydra's canvas capture stream (also feeds WebRTC); null on browsers
+    // without captureStream support (the preview button hides itself then)
+    captureStream() {
+        const h = window.hydraSynth
+        return (h && h.captureStream) || null
+    }
+
+    // one persistent <video> per aux window so deck rebuilds re-adopt the
+    // element instead of restarting the stream (avoids a black flash)
+    previewFor(root) {
+        const stream = this.captureStream()
+        if (!stream) return null
+        const win = root === this.popupRoot ? this.popupWin : this.pipWin
+        if (!win) return null
+        if (!win.__vjPreview || win.__vjPreview.ownerDocument !== root.ownerDocument) {
+            const d = root.ownerDocument
+            const wrap = el(d, 'div', 'vj-preview')
+            const video = el(d, 'video')
+            video.muted = true
+            video.autoplay = true
+            video.playsInline = true
+            wrap.appendChild(video)
+            win.__vjPreview = wrap
+        }
+        const video = win.__vjPreview.querySelector('video')
+        if (video.srcObject !== stream) video.srcObject = stream
+        const p = video.play()
+        if (p && p.catch) p.catch(() => { /* resumes on autoplay */ })
+        return win.__vjPreview
     }
 
     // direct DOM readout update for MIDI-driven params (no re-render per message)
@@ -524,6 +558,10 @@ export default class VJPanel {
             .map((n) => ({ left: n.scrollLeft, top: n.scrollTop }))
         root.textContent = ''
         root.appendChild(this.renderToprail(d, root))
+        if (this.previewOn && (root === this.popupRoot || root === this.pipRoot)) {
+            const pv = this.previewFor(root)
+            if (pv) root.appendChild(pv)
+        }
         root.appendChild(this.renderScenes(d))
         const body = el(d, 'div', 'vj-body')
         const model = this.model
@@ -575,6 +613,7 @@ export default class VJPanel {
     }
 
     renderToprail(d, root) {
+        const isAux = root === this.popupRoot || root === this.pipRoot
         const rail = el(d, 'div', 'vj-toprail')
         rail.appendChild(el(d, 'span', 'vj-brand', 'HYDRA VJ DECK'))
 
@@ -623,10 +662,21 @@ export default class VJPanel {
         }
         rail.appendChild(codeBtn)
 
+        // aux windows can't see the main tab's canvas — offer a live preview
+        if (isAux && this.captureStream()) {
+            const prev = el(d, 'button', 'vj-fft' + (this.previewOn ? ' vj-on' : ''), '◉ LIVE')
+            prev.title = this.tr('panel.preview', 'show the visuals live in this window (the stream pauses while the hydra tab is hidden)')
+            prev.onclick = () => {
+                this.previewOn = !this.previewOn
+                try { localStorage.setItem('hydra-vj-preview', this.previewOn ? '1' : '0') } catch (e) { /* private mode */ }
+                this.renderAll()
+            }
+            rail.appendChild(prev)
+        }
+
         const spacer = el(d, 'div', 'vj-spacer')
         rail.appendChild(spacer)
 
-        const isAux = root === this.popupRoot || root === this.pipRoot
         if (!isAux) {
             const pop = el(d, 'button', 'vj-railbtn')
             pop.appendChild(el(d, 'i', 'fas fa-external-link-alt'))
