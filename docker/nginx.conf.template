@@ -16,7 +16,7 @@ server {
 
     # remote VJ deck relay — the WebSocket upgrade must pass through here AND
     # through any TLS proxy in front of this container. The upstream is
-    # env-configurable (HYDRA_RELAY_HOST / HYDRA_RELAY_PORT, defaults relay:8081):
+    # env-configurable (HYDRA_RELAY_HOST / HYDRA_RELAY_PORT, defaults hydra-relay:8081):
     # this file is an nginx envsubst template rendered at container start.
     # Resolved at request time (variable + docker DNS) so nginx still boots
     # when the relay service is not deployed.

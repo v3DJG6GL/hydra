@@ -14,7 +14,7 @@ FROM nginxinc/nginx-unprivileged:1.27-alpine
 # entrypoint on start) so the relay upstream is overridable per deployment:
 #   HYDRA_RELAY_HOST (default: relay)   HYDRA_RELAY_PORT (default: 8081)
 COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
-ENV HYDRA_RELAY_HOST=relay \
+ENV HYDRA_RELAY_HOST=hydra-relay \
     HYDRA_RELAY_PORT=8081
 # the rendered config lands in conf.d at startup — keep that writable for ANY
 # runtime uid:gid (compose `user:` overrides, e.g. 568:568), same spirit as

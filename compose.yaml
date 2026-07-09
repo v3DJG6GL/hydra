@@ -18,15 +18,15 @@ services:
     # nginx proxies /ws to the relay; override when your relay service or
     # network alias is named differently (defaults shown):
     # environment:
-    #   HYDRA_RELAY_HOST: relay
+    #   HYDRA_RELAY_HOST: hydra-relay
     #   HYDRA_RELAY_PORT: "8081"
 
   # WebSocket relay for the remote VJ deck (tablet/laptop controlling this
   # instance). nginx inside `hydra` proxies /ws here — no extra published
   # port, and any TLS proxy in front only ever talks to :8080.
-  # If you rename this service, either give it a network alias `relay` or
-  # set HYDRA_RELAY_HOST on the hydra service to match.
-  relay:
+  # If you rename this service, set HYDRA_RELAY_HOST on the hydra service
+  # to match (or give this service a network alias `hydra-relay`).
+  hydra-relay:
     image: ghcr.io/v3djg6gl/hydra-relay:latest
     container_name: hydra-relay
     restart: unless-stopped
@@ -34,7 +34,7 @@ services:
     volumes:
       # per-room scene banks survive restarts (and kiosk browsers that wipe
       # localStorage)
-      - relay-data:/data
+      - hydra-relay-data:/data
 
 volumes:
-  relay-data:
+  hydra-relay-data:

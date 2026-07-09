@@ -21,7 +21,7 @@ The design behind all of this is in [remote-deck-plan.md](remote-deck-plan.md).
   sockets into rooms and forwards messages. It also stores each room's scene
   bank so a kiosk browser with wiped storage gets its scenes back. In
   development `npm run dev` serves the relay itself; in production it's the
-  `relay` service in `compose.yaml`, proxied by nginx at `/ws`.
+  `hydra-relay` service in `compose.yaml`, proxied by nginx at `/ws`.
 
 ### Customizing the deployment
 
@@ -32,9 +32,10 @@ The design behind all of this is in [remote-deck-plan.md](remote-deck-plan.md).
   fix the mode once with
   `docker run --rm -v <volume>:/data alpine chmod 1777 /data`.
 - **Relay service name**: nginx inside the `hydra` image dials
-  `http://relay:8081` by default. If your relay service is named differently
-  (or lives at another port), set `HYDRA_RELAY_HOST` / `HYDRA_RELAY_PORT` on the
-  `hydra` service — or give the relay a network alias `relay`.
+  `http://hydra-relay:8081` by default. If your relay service is named
+  differently (or lives at another port), set `HYDRA_RELAY_HOST` /
+  `HYDRA_RELAY_PORT` on the `hydra` service — or give the relay a network
+  alias `hydra-relay`.
 - The relay itself takes `HYDRA_RELAY_PORT` (default 8081), `HYDRA_RELAY_DATA_DIR` (default
   `/data`) and `HYDRA_RELAY_ALLOWED_ORIGINS` (comma-separated allowlist; default is
   same-host origin checking).

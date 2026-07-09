@@ -1,4 +1,4 @@
-// Standalone entry for the VJ relay sidecar (compose service `relay`).
+// Standalone entry for the VJ relay sidecar (compose service `hydra-relay`).
 // In development the same relay is attached to the vite server instead —
 // see the vjRelay plugin in vite.config.js.
 import http from 'node:http'
