@@ -282,7 +282,10 @@ ${code}
       })
   }
 
-  saveLocally(code) {
+  // replace: true rewrites the current history entry instead of pushing a new
+  // one — used for high-frequency saves (VJ panel fader commits) so a live
+  // session doesn't flood the back button
+  saveLocally(code, { replace = false } = {}) {
     let base64 = this.encodeBase64(code)
 
     this.searchParams.delete('sketch_id')
@@ -294,7 +297,11 @@ ${code}
 
     let newurl = window.location.protocol + '//' +
       window.location.host + window.location.pathname + '?' + url_params
-    window.history.pushState({ path: newurl }, '', newurl)
+    if (replace) {
+      window.history.replaceState({ path: newurl }, '', newurl)
+    } else {
+      window.history.pushState({ path: newurl }, '', newurl)
+    }
     this.url = newurl
   }
 

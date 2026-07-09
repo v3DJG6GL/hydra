@@ -27,11 +27,11 @@ export default function galleryStore(state, emitter) {
       // }) 
       
       // save to url
-      emitter.on('gallery: save to URL', function (code) {
+      emitter.on('gallery: save to URL', function (code, opts) {
         // let editor = state.editor.editor
         // const editorText = editor.getValue()
-        sketches.saveLocally(code)
-      }) 
+        sketches.saveLocally(code, opts)
+      })
 
       emitter.on('gallery: clear', () => {
         sketches.clear()
