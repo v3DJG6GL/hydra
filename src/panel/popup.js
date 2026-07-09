@@ -18,7 +18,7 @@ setInterval(function () {
 `
 
 // stylesheets the panel needs inside a child document (popup / pip window)
-export const STYLE_MATCH = /panel\.css|fontawesome\.css|fonts\.googleapis/
+export const STYLE_MATCH = /panel\.css|fontawesome\.css|fonts\.css/
 
 export function openPopup() {
     // must be called from a user gesture (popup blockers).

@@ -94,6 +94,10 @@ export default function store(state, emitter) {
         updateAvailableLanguages()
         emitter.emit('render')
       })
+      .catch(() => {
+        // offline / no github: english fallbacks bundled in text-elements.js
+        console.info(`translation for ${lang} unavailable (offline?) — using built-in strings`)
+      })
   }
   // const path = `${window.location.origin}/locales/es.json`
 
