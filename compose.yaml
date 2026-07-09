@@ -9,6 +9,9 @@ services:
     image: ghcr.io/v3djg6gl/hydra:latest
     container_name: hydra
     restart: unless-stopped
+    # Runs as uid 101 (nginx) by default; the unprivileged base image also
+    # accepts any arbitrary uid:gid, e.g. to match a host user:
+    # user: "568:568"
     ports:
       # host:container — serve on http://<server>:8080
-      - "8080:80"
+      - "8080:8080"
