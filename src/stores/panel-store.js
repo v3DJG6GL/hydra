@@ -52,6 +52,11 @@ export default function panelStore(state, emitter) {
         ensure().popout()
     })
 
+    // remote intents need the panel alive even while the dock is closed
+    emitter.on('panel: ensure', () => {
+        ensure()
+    })
+
     // any eval that is not our own shadow replaces the running program with
     // one that reads literals again — live bindings must re-arm lazily
     emitter.on('repl: eval', () => {

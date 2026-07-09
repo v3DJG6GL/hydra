@@ -29,6 +29,14 @@ export default defineConfig({
         // global: {}
     },
     plugins: [vjRelay()],
+    build: {
+        rollupOptions: {
+            input: {
+                main: 'index.html',
+                deck: 'deck.html'
+            }
+        }
+    },
     optimizeDeps: {
         esbuildOptions: {
             define: {
