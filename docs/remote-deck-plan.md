@@ -8,7 +8,9 @@ Decisions this plan is built on: controllers are Android tablets and desktop
 browsers (no iOS requirement), the rig must work **offline-first** (venue wifi
 can't be trusted; own AP / travel router is the recommended setup), and v1
 includes both the full control surface and a **live video preview** on the
-remote.
+remote. It must **also work over the open internet (WAN)**: an HTTPS
+deployment of this fork already runs behind a TLS reverse proxy (openresty)
+at a public URL, and deck ↔ renderer pairing must work through that too.
 
 ## Why the current pop-out can't do this
 
@@ -38,6 +40,43 @@ boundary. A remote deck needs a real transport and protocol.
   VJPanel/patcher/Mutator paths and rebroadcasts authoritative state with a
   monotonic `seq`. New/reconnecting clients request a full snapshot, then
   consume deltas; snapshot-on-gap when a seq is missed.
+### Two deployment modes, one build
+
+Because the relay is **same-origin** with wherever the app was loaded from,
+the same image covers both scenarios with zero client-side switches — the
+deck picks `ws://` vs `wss://` from `location.protocol`:
+
+- **LAN / offline mode**: the Pi runs the compose stack itself and serves
+  plain http on the LAN; decks connect over `ws://`. Works with no internet
+  at all (after the CDN deps are vendored).
+- **WAN mode**: everyone — the Pi's kiosk browser *and* the decks — loads the
+  app from the public HTTPS deployment; the relay lives next to it and all
+  parties connect **outbound** over `wss://`. No port forwarding on either
+  end, works from any network. The renderer no longer needs to be on the same
+  LAN as the controller at all.
+
+Don't mix the modes: a page loaded over https cannot open `ws://` to a LAN
+relay (mixed content), so the relay is always the one behind the origin the
+page came from. WAN-mode requirements on the outer reverse proxy: it must
+pass the WebSocket `Upgrade` on `/ws` (openresty/nginx needs the standard
+`proxy_http_version 1.1` + `Upgrade`/`Connection` headers on that location),
+and the protocol's ~25s server pings keep the connection under typical proxy
+idle timeouts.
+
+WAN mode is also a *capability upgrade*, because https is a secure context:
+
+- the Pi loading the public URL gets `getUserMedia` (mic reactivity, camera
+  sources) without the `http://localhost` trick — that constraint applies to
+  LAN mode only;
+- the Android tablet gets **Web MIDI** (a controller plugged into the tablet
+  becomes possible) and **Screen Wake Lock** (no sleeping mid-set) for free,
+  with no mkcert/CA gymnastics.
+
+Trade-offs to accept: control latency now routes through the server
+(irrelevant for button/fader ops), the venue needs working internet (if it
+doesn't, fall back to LAN mode — that's why both exist), and the security bar
+is higher (below).
+
 - The remote page is a **second Vite entry** (`deck.html`) bundling
   `sketch-model.js` (pure acorn → model), the panel renderer (already
   parameterized by host document), `patcher.js` edit constructors, and a
@@ -135,6 +174,13 @@ boundary. A remote deck needs a real transport and protocol.
 
 - Random 128-bit token in the deck URL, enforced at WS handshake; relay
   validates `Origin`; single-active-controller lock with explicit takeover.
+- **WAN mode raises the bar — the relay is reachable from the whole
+  internet.** Sessions live in relay-side **rooms keyed by unguessable
+  random IDs** (created by the host tab, never enumerable); joining requires
+  room ID + token; tokens expire and rotate per session; the relay rate-limits
+  handshakes and drops unauthenticated sockets fast. On the plus side, TLS
+  means the token and code are no longer sniffable in transit — WAN mode is
+  *more* private than LAN plain-ws in that respect.
 - **Never project the pairing secret.** The obvious "QR on the hydra page"
   puts the token on the wall for the whole audience. Pairing QR/room-code
   lives on a **separate admin route** (open it on the Pi before the show, or
@@ -150,8 +196,12 @@ boundary. A remote deck needs a real transport and protocol.
   the same relay** (no extra server; works offline on the LAN). Use a
   maintained simple-peer fork (`@thaunknown/simple-peer`) — not the bundled
   9.11.
-- Fallback if RTC misbehaves on the Pi: throttled JPEG frames
-  (`getScreenImage` at 2–4 fps) over the WS — ugly but dependable.
+- **Over WAN, WebRTC needs NAT traversal**: configure a STUN server (public
+  ones suffice) for the direct-P2P attempt; behind symmetric NAT that fails
+  and a TURN server would be needed — don't run one for v1. Instead:
+- Fallback (both modes, and the WAN answer when P2P fails): throttled JPEG
+  frames (`getScreenImage` at 2–4 fps) over the existing WS relay — ugly but
+  dependable, and it traverses anything the control channel traverses.
 
 ## Raspberry Pi appliance notes
 
@@ -175,7 +225,9 @@ boundary. A remote deck needs a real transport and protocol.
 ## Suggested milestones
 
 1. Vendor CDN deps (offline boot works on a bare LAN).
-2. Relay sidecar + nginx `/ws` + compose service; token + Origin checks.
+2. Relay sidecar + nginx `/ws` + compose service; rooms + token + Origin
+   checks; verify the public deployment's outer proxy passes the WebSocket
+   upgrade end-to-end (`wss://…/ws`).
 3. Adapter extraction in VJPanel (no behavior change for dock/popup/pip).
 4. `deck.html` remote entry: snapshot/delta sync, intents, scenes
    (relay-persisted), shuffle/mutate/undo, error toasts, reconnect UX.
