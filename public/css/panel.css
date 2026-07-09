@@ -534,6 +534,16 @@
   min-height: 18px;
 }
 
+/* pulse on the row a random change just hit */
+.vj-param.vj-flash {
+  animation: vj-flash-pulse 1.25s ease-out;
+}
+
+@keyframes vj-flash-pulse {
+  0% { background: rgba(255, 0, 102, 0.35); box-shadow: -4px 0 0 var(--vj-armed); }
+  100% { background: none; box-shadow: none; }
+}
+
 .vj-label {
   font-size: 9px;
   letter-spacing: 0.14em;

@@ -44,6 +44,8 @@ export default {
                 'new-chain': 'new chain',
                 'out-of-sync': 'out of sync — code does not parse',
                 'hush': 'stop all outputs (code stays)',
+                'shuffle': 'show a random example sketch (one undo brings the previous back)',
+                'mutate': 'make a random change to one value — shift-click / right-click swaps a whole function',
                 'pop-out': 'open deck in a new tab (drag it out for a second screen; visuals pause while the hydra tab is hidden)',
                 'close': 'close panel (ctrl+shift+y)',
                 'insert': 'insert a function here',

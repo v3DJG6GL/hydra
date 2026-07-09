@@ -106,6 +106,76 @@ export default class VJPanel {
         this.rebuild()
     }
 
+    // Both random actions reuse the editor's own flows (same as the toolbar
+    // icons), which write the buffer in several history events (shuffle:
+    // clear + setValue, mutate: setValue per eval retry + format pass).
+    // runAsSingleEdit collapses them so ONE deck undo press restores the
+    // previous sketch.
+    deckShuffle() {
+        this.runAsSingleEdit(() => this.emit('gallery:showExample'))
+    }
+
+    deckMutate(changeTransform) {
+        if (this.outOfSync) return
+        // deck semantics: modifier = swap a transform. The editor handler
+        // reads metaKey for that (shiftKey there means mutator-undo — never
+        // forward it)
+        this.runAsSingleEdit(() => this.emit('editor: randomize', { metaKey: !!changeTransform }))
+    }
+
+    runAsSingleEdit(fn) {
+        const cm = this.cm
+        if (!cm) return
+        const oldModel = this.model
+        const before = cm.getValue()
+        const undoBefore = cm.historySize().undo
+        fn()
+        const after = cm.getValue()
+        const added = cm.historySize().undo - undoBefore
+        if (after !== before && added > 1) {
+            for (let i = 0; i < added; i++) cm.undo()
+            if (cm.getValue() === before) {
+                cm.replaceRange(after, cm.posFromIndex(0), cm.posFromIndex(before.length), '+vjrandom')
+                cm.changeGeneration(true)
+            } else {
+                // unexpected history shape — put it back, accept multi-step undo
+                for (let i = 0; i < added; i++) cm.redo()
+            }
+        }
+        this.rebuild()
+        this.flashChangedParams(oldModel)
+    }
+
+    // pulse the rows a random action just hit, so the operator sees WHAT the
+    // dice changed. A literal glitch moves exactly one value; a transform swap
+    // renames paths, so its freshly-appeared args are flashed instead. After a
+    // shuffle (everything different) the size guard keeps the deck calm.
+    flashChangedParams(oldModel) {
+        if (!oldModel || !oldModel.ok || this.outOfSync || !this.model || !this.model.ok) return
+        const changed = []
+        for (const [path, arg] of this.model.pathIndex) {
+            if (!arg || arg.kind !== 'number') continue
+            const prev = oldModel.pathIndex.get(path)
+            if (prev && prev.kind === 'number' && prev.value !== arg.value) changed.push(path)
+        }
+        if (!changed.length) {
+            for (const path of this.model.pathIndex.keys()) {
+                if (!oldModel.pathIndex.has(path)) changed.push(path)
+            }
+        }
+        if (!changed.length || changed.length > 6) return
+        changed.forEach((path) => {
+            const sel = `[data-path="${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+            ;[this.dockRoot, this.popupRoot, this.pipRoot].forEach((root) => {
+                if (!root) return
+                const rowEl = root.querySelector(sel)
+                if (!rowEl) return
+                rowEl.classList.add('vj-flash')
+                setTimeout(() => rowEl.classList.remove('vj-flash'), 1300)
+            })
+        })
+    }
+
     rebuild() {
         const cm = this.cm
         if (!cm) return
@@ -183,7 +253,7 @@ export default class VJPanel {
     // direct DOM readout update for MIDI-driven params (no re-render per message)
     flashParamValue(path, value) {
         const sel = `[data-path="${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"] .vj-value`
-        ;[this.dockRoot, this.popupRoot].forEach((root) => {
+        ;[this.dockRoot, this.popupRoot, this.pipRoot].forEach((root) => {
             if (!root) return
             const valueEl = root.querySelector(sel)
             if (valueEl) valueEl.textContent = fmtShort(value)
@@ -679,6 +749,23 @@ export default class VJPanel {
         hush.title = this.tr('panel.hush', 'stop all outputs (code stays)')
         hush.onclick = () => this.emit('repl: eval', 'hush()')
         rail.appendChild(hush)
+
+        const shuf = el(d, 'button', 'vj-railbtn')
+        shuf.appendChild(el(d, 'i', 'fas fa-random'))
+        shuf.title = this.tr('panel.shuffle', 'show a random example sketch (one undo brings the previous back)')
+        shuf.onclick = () => this.deckShuffle()
+        rail.appendChild(shuf)
+
+        const dice = el(d, 'button', 'vj-railbtn')
+        dice.appendChild(el(d, 'i', 'fas fa-dice'))
+        dice.title = this.tr('panel.mutate', 'make a random change to one value — shift-click / right-click swaps a whole function')
+        dice.disabled = this.outOfSync
+        dice.onclick = (e) => this.deckMutate(e.shiftKey)
+        dice.oncontextmenu = (e) => {
+            e.preventDefault()
+            this.deckMutate(true)
+        }
+        rail.appendChild(dice)
 
         const histSize = this.cm ? this.cm.historySize() : { undo: 0, redo: 0 }
         const undoBtn = el(d, 'button', 'vj-railbtn')

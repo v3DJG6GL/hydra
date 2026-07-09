@@ -8,10 +8,22 @@ export default function editorStore(state, emitter) {
         if (evt.shiftKey) {
             editor.mutator.doUndo();
         } else {
-            editor.mutator.mutate({ reroll: false, changeTransform: evt.metaKey });
+            try {
+                editor.mutator.mutate({ reroll: false, changeTransform: evt.metaKey });
+            } catch (e) {
+                // Mutator parses before its own try/catch — a buffer that
+                // doesn't parse must not blow up the handler
+                console.warn('randomize skipped: ' + (e.message || e))
+                return
+            }
             editor.formatCode()
             emitter.emit('gallery: save to URL', editor.getValue())
         }
+        // Mutator evals through the editor's own repl, not the emitter's
+        // 'repl: eval', so the live-bind invalidation hook in panel-store
+        // never hears about it — previously-driven faders would keep writing
+        // uniforms nothing reads. Bindings re-arm on the next gesture.
+        if (state.vjPanel) state.vjPanel.lb.invalidate()
     })
 
     emitter.on('editor: add code to top', (code) => {
