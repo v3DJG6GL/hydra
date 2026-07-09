@@ -164,6 +164,9 @@ function armRuntimeRevert(ctx, edit, removed, code) {
             const back = cm.getValue()
             emit('repl: eval', back, () => {})
             emit('gallery: save to URL', back, { replace: true })
+            // remote decks surface this as a toast (the wall just changed back
+            // under the operator's fingers — never leave that silent off-host)
+            emit('panel: runtime-reverted')
             ctx.rebuild()
         }
     }

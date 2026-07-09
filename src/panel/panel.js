@@ -2,12 +2,16 @@
 // model and renders into any number of hosts (the in-page dock, the pop-out
 // window) as plain DOM — deliberately NOT routed through choo's app-wide
 // morphing so 60Hz fader gestures never re-render the app.
+//
+// Everything that touches the sketch or the synth goes through `this.host`
+// (a host adapter): host-local.js in the main tab and its same-context
+// popup/PiP children, host-remote.js on a deck running on another device.
 import { buildModel, freeOutput } from './sketch-model.js'
-import { getTransforms, grouped, fmtNumber, fmtShort, INT_PARAMS } from './metadata.js'
-import { edits, applyEdit, applyQuietEdit } from './patcher.js'
-import LiveBind from './live-bind.js'
+import { grouped, fmtNumber, fmtShort, INT_PARAMS } from './metadata.js'
+import { edits } from './patcher.js'
+import LocalHost from './host-local.js'
 import MidiControl from './midi.js'
-import { loadScenes, saveScenes, captureThumb, SLOT_COUNT, loadCycleSecs, saveCycleSecs } from './scenes.js'
+import { loadCycleSecs, saveCycleSecs } from './scenes.js'
 import { openPopup, STYLE_MATCH } from './popup.js'
 
 const CHANNEL_CLASS = { o0: 'ch-o0', o1: 'ch-o1', o2: 'ch-o2', o3: 'ch-o3' }
@@ -38,11 +42,12 @@ function el(d, tag, cls, text) {
 }
 
 export default class VJPanel {
-    constructor(state, emit) {
+    constructor(state, emit, host = null) {
         this.state = state
         this.emit = emit
-        this.lb = new LiveBind()
-        this.scenes = loadScenes()
+        this.host = host || new LocalHost(state, emit)
+        this.host.bind(this)
+        this.host.on('scenes-changed', () => this.renderAll())
         this.cycle = { on: false, timer: null, secs: loadCycleSecs(), pos: -1 }
         this.midi = new MidiControl(this)
         this.fftShown = false
@@ -51,7 +56,7 @@ export default class VJPanel {
         this.model = null
         this.outOfSync = false
         this.parseError = null
-        this.transforms = getTransforms()
+        this.transforms = this.host.getTransforms()
         let previewPref = null
         try { previewPref = localStorage.getItem('hydra-vj-preview') } catch (e) { /* private mode */ }
         this.previewOn = previewPref === '1'
@@ -60,10 +65,15 @@ export default class VJPanel {
         this.popupRoot = null
         this.pipWin = null
         this.pipRoot = null
+        this.remoteRoot = null // set by the remote deck bootstrap
     }
 
-    get cm() {
-        return this.state.editor && this.state.editor.editor && this.state.editor.editor.cm
+    get lb() {
+        return this.host.lb
+    }
+
+    get scenes() {
+        return this.host.scenes
     }
 
     tr(key, fallback) {
@@ -74,76 +84,51 @@ export default class VJPanel {
     }
 
     ctx() {
-        return {
-            cm: this.cm,
-            emit: this.emit,
-            getModel: () => (this.outOfSync ? null : this.model),
-            rebuild: () => this.rebuild()
-        }
+        return this.host.ctx()
     }
 
     apply(edit, opts) {
-        return applyEdit(this.ctx(), edit, opts)
+        return this.host.applyEdit(edit, opts)
     }
 
     // text-only commit for values already live on screen (uniform or global)
     applyQuiet(edit) {
-        return applyQuietEdit(this.ctx(), edit)
+        return this.host.applyQuietEdit(edit)
     }
 
-    // Every deck edit is a CodeMirror buffer splice, so undo/redo simply step
-    // the shared editor history and re-evaluate the result. Deck and editor
-    // changes form one timeline — undoing past a manual code edit is intended.
     historyStep(dir) {
-        const cm = this.cm
-        if (!cm) return
-        const size = cm.historySize()
-        if (!(dir === 'undo' ? size.undo : size.redo)) return
-        dir === 'undo' ? cm.undo() : cm.redo()
-        const code = cm.getValue()
-        this.emit('repl: eval', code)
-        this.emit('gallery: save to URL', code, { replace: true })
+        this.host.historyStep(dir)
         this.rebuild()
     }
 
-    // Both random actions reuse the editor's own flows (same as the toolbar
-    // icons), which write the buffer in several history events (shuffle:
-    // clear + setValue, mutate: setValue per eval retry + format pass).
-    // runAsSingleEdit collapses them so ONE deck undo press restores the
-    // previous sketch.
+    // Both random actions collapse the editor's multi-event history writes so
+    // ONE deck undo press restores the previous sketch (see host runRandom).
     deckShuffle() {
-        this.runAsSingleEdit(() => this.emit('gallery:showExample'))
+        const oldModel = this.model
+        this.host.runRandom('shuffle')
+        this.afterHostAction(oldModel)
     }
 
     deckMutate(changeTransform) {
         if (this.outOfSync) return
-        // deck semantics: modifier = swap a transform. The editor handler
-        // reads metaKey for that (shiftKey there means mutator-undo — never
-        // forward it)
-        this.runAsSingleEdit(() => this.emit('editor: randomize', { metaKey: !!changeTransform }))
+        const oldModel = this.model
+        this.host.runRandom('mutate', changeTransform)
+        this.afterHostAction(oldModel)
     }
 
-    runAsSingleEdit(fn) {
-        const cm = this.cm
-        if (!cm) return
-        const oldModel = this.model
-        const before = cm.getValue()
-        const undoBefore = cm.historySize().undo
-        fn()
-        const after = cm.getValue()
-        const added = cm.historySize().undo - undoBefore
-        if (after !== before && added > 1) {
-            for (let i = 0; i < added; i++) cm.undo()
-            if (cm.getValue() === before) {
-                cm.replaceRange(after, cm.posFromIndex(0), cm.posFromIndex(before.length), '+vjrandom')
-                cm.changeGeneration(true)
-            } else {
-                // unexpected history shape — put it back, accept multi-step undo
-                for (let i = 0; i < added; i++) cm.redo()
-            }
-        }
+    // a local host has already applied the action when the call returns; a
+    // remote host applies asynchronously and onRemoteCode does this instead
+    afterHostAction(oldModel) {
+        if (this.host.remote) return
         this.rebuild()
         this.flashChangedParams(oldModel)
+    }
+
+    // authoritative code arrived over the wire (remote decks only)
+    onRemoteCode(cause) {
+        const oldModel = this.model
+        this.rebuild()
+        if (cause === 'random') this.flashChangedParams(oldModel)
     }
 
     // pulse the rows a random action just hit, so the operator sees WHAT the
@@ -166,7 +151,7 @@ export default class VJPanel {
         if (!changed.length || changed.length > 6) return
         changed.forEach((path) => {
             const sel = `[data-path="${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
-            ;[this.dockRoot, this.popupRoot, this.pipRoot].forEach((root) => {
+            ;[this.dockRoot, this.popupRoot, this.pipRoot, this.remoteRoot].forEach((root) => {
                 if (!root) return
                 const rowEl = root.querySelector(sel)
                 if (!rowEl) return
@@ -177,10 +162,9 @@ export default class VJPanel {
     }
 
     rebuild() {
-        const cm = this.cm
-        if (!cm) return
-        this.transforms = getTransforms()
-        const res = buildModel(cm.getValue(), this.transforms)
+        if (!this.host.hasBuffer()) return
+        this.transforms = this.host.getTransforms()
+        const res = buildModel(this.host.getCode(), this.transforms)
         if (res.ok) {
             this.model = res
             this.outOfSync = false
@@ -212,26 +196,24 @@ export default class VJPanel {
         return node.closest('.vj-panel') || this.dockRoot
     }
 
-    // the synth's own audio reference — survives sketches that assign to the
-    // bare global `a` (repl restores the global too, but don't depend on it)
-    audio() {
-        const h = window.hydraSynth
-        return (h && h.synth && h.synth.a) || window.a || null
+    // aux hosts (pop-out, PiP, remote page) get preview + trimmed toprail
+    isAuxRoot(root) {
+        return root === this.popupRoot || root === this.pipRoot || root === this.remoteRoot
     }
 
-    // hydra's canvas capture stream (also feeds WebRTC); null on browsers
-    // without captureStream support (the preview button hides itself then)
-    captureStream() {
-        const h = window.hydraSynth
-        return (h && h.captureStream) || null
+    winFor(root) {
+        if (root === this.popupRoot) return this.popupWin
+        if (root === this.pipRoot) return this.pipWin
+        if (root === this.remoteRoot) return root.ownerDocument.defaultView
+        return null
     }
 
     // one persistent <video> per aux window so deck rebuilds re-adopt the
     // element instead of restarting the stream (avoids a black flash)
     previewFor(root) {
-        const stream = this.captureStream()
+        const stream = this.host.captureStream()
         if (!stream) return null
-        const win = root === this.popupRoot ? this.popupWin : this.pipWin
+        const win = this.winFor(root)
         if (!win) return null
         if (!win.__vjPreview || win.__vjPreview.ownerDocument !== root.ownerDocument) {
             const d = root.ownerDocument
@@ -253,7 +235,7 @@ export default class VJPanel {
     // direct DOM readout update for MIDI-driven params (no re-render per message)
     flashParamValue(path, value) {
         const sel = `[data-path="${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"] .vj-value`
-        ;[this.dockRoot, this.popupRoot, this.pipRoot].forEach((root) => {
+        ;[this.dockRoot, this.popupRoot, this.pipRoot, this.remoteRoot].forEach((root) => {
             if (!root) return
             const valueEl = root.querySelector(sel)
             if (valueEl) valueEl.textContent = fmtShort(value)
@@ -267,6 +249,7 @@ export default class VJPanel {
         if (this.dockRoot && !this.state.panel.popup && !this.state.panel.pip) this.renderInto(this.dockRoot)
         if (this.popupRoot && this.popupWin && !this.popupWin.closed) this.renderInto(this.popupRoot)
         if (this.pipRoot && this.pipWin) this.renderInto(this.pipRoot)
+        if (this.remoteRoot) this.renderInto(this.remoteRoot)
     }
 
     // --------------------------------------------- document picture-in-picture
@@ -361,7 +344,7 @@ export default class VJPanel {
 
     renderScenes(d) {
         const strip = el(d, 'div', 'vj-scenes')
-        const current = this.cm ? this.cm.getValue() : null
+        const current = this.host.hasBuffer() ? this.host.getCode() : null
         this.scenes.forEach((scene, i) => {
             const slot = el(d, 'button', 'vj-scene' + (scene ? ' vj-filled' : '') +
                 (scene && current !== null && scene.code === current ? ' vj-active' : '') +
@@ -515,12 +498,7 @@ export default class VJPanel {
                     const arr = Array.isArray(parsed) ? parsed
                         : parsed && Array.isArray(parsed.scenes) ? parsed.scenes : null
                     if (!arr) throw new Error('not a scene bank file')
-                    this.scenes = arr.slice(0, SLOT_COUNT).map((s) => s && typeof s.code === 'string'
-                        ? { code: s.code, thumb: typeof s.thumb === 'string' ? s.thumb : null, savedAt: s.savedAt || Date.now() }
-                        : null)
-                    while (this.scenes.length < SLOT_COUNT) this.scenes.push(null)
-                    saveScenes(this.scenes)
-                    this.renderAll()
+                    this.host.sceneReplaceAll(arr)
                 } catch (e) {
                     if (window._reportError) window._reportError(new Error('scene bank import failed: ' + e.message))
                 }
@@ -535,41 +513,18 @@ export default class VJPanel {
     }
 
     saveScene(i) {
-        const cm = this.cm
-        if (!cm) return
-        const code = cm.getValue()
-        this.scenes[i] = { code, thumb: null, savedAt: Date.now() }
-        saveScenes(this.scenes)
-        this.renderAll()
-        const hydra = this.state.hydra && this.state.hydra.hydra
-        captureThumb(hydra, (thumb) => {
-            if (thumb && this.scenes[i] && this.scenes[i].code === code) {
-                this.scenes[i].thumb = thumb
-                saveScenes(this.scenes)
-                this.renderAll()
-            }
-        })
+        this.host.sceneSave(i)
     }
 
     recallScene(i, opts) {
-        const scene = this.scenes[i]
-        if (!scene) return
+        if (!this.scenes[i]) return
         this.cycle.pos = i // manual recalls steer the auto-cycle too
-        if (opts && opts.replaceURL) {
-            // auto-cycle recalls must not flood the browser history
-            this.emit('editor: load code', scene.code)
-            this.emit('repl: eval', scene.code)
-            this.emit('gallery: save to URL', scene.code, { replace: true })
-        } else {
-            this.emit('load and eval code', scene.code, true)
-        }
+        this.host.sceneRecall(i, opts)
         this.rebuild()
     }
 
     clearScene(i) {
-        this.scenes[i] = null
-        saveScenes(this.scenes)
-        this.renderAll()
+        this.host.sceneClear(i)
     }
 
     // drag & drop reorder: the dragged scene is re-inserted at the target
@@ -603,11 +558,7 @@ export default class VJPanel {
     }
 
     moveScene(from, to) {
-        if (from === to || from < 0 || from >= SLOT_COUNT || !this.scenes[from]) return
-        const [moved] = this.scenes.splice(from, 1)
-        this.scenes.splice(to, 0, moved)
-        saveScenes(this.scenes)
-        this.renderAll()
+        this.host.sceneMove(from, to)
     }
 
     // ---- auto-cycle: recall the filled slots in order every N seconds
@@ -686,7 +637,7 @@ export default class VJPanel {
             .map((n) => ({ left: n.scrollLeft, top: n.scrollTop }))
         root.textContent = ''
         root.appendChild(this.renderToprail(d, root))
-        if (this.previewOn && (root === this.popupRoot || root === this.pipRoot)) {
+        if (this.previewOn && this.isAuxRoot(root)) {
             const pv = this.previewFor(root)
             if (pv) root.appendChild(pv)
         }
@@ -708,7 +659,7 @@ export default class VJPanel {
         add.appendChild(el(d, 'span', null, ' ' + this.tr('panel.new-chain', 'new chain')))
         add.onclick = () => {
             const target = this.model ? freeOutput(this.model) : 'o0'
-            this.apply(edits.appendChain(this.model ? this.model.text : this.cm.getValue(), target))
+            this.apply(edits.appendChain(this.model ? this.model.text : this.host.getCode(), target))
         }
         addRow.appendChild(add)
         const freeSlot = ['s0', 's1', 's2', 's3'].find((s) => !(model && model.statements.some(
@@ -741,13 +692,13 @@ export default class VJPanel {
     }
 
     renderToprail(d, root) {
-        const isAux = root === this.popupRoot || root === this.pipRoot
+        const isAux = this.isAuxRoot(root)
         const rail = el(d, 'div', 'vj-toprail')
         rail.appendChild(el(d, 'span', 'vj-brand', 'HYDRA VJ DECK'))
 
         const hush = el(d, 'button', 'vj-hush', 'HUSH')
         hush.title = this.tr('panel.hush', 'stop all outputs (code stays)')
-        hush.onclick = () => this.emit('repl: eval', 'hush()')
+        hush.onclick = () => this.host.run('hush()')
         rail.appendChild(hush)
 
         const shuf = el(d, 'button', 'vj-railbtn')
@@ -767,7 +718,7 @@ export default class VJPanel {
         }
         rail.appendChild(dice)
 
-        const histSize = this.cm ? this.cm.historySize() : { undo: 0, redo: 0 }
+        const histSize = this.host.historySize()
         const undoBtn = el(d, 'button', 'vj-railbtn')
         undoBtn.appendChild(el(d, 'i', 'fas fa-undo'))
         undoBtn.title = this.tr('panel.undo', 'undo the last change (ctrl+z while the deck has focus)')
@@ -785,10 +736,16 @@ export default class VJPanel {
         const fft = el(d, 'button', 'vj-fft' + (this.fftShown ? ' vj-on' : ''), '∿ FFT')
         fft.title = this.tr('panel.fft', 'toggle the audio FFT monitor — right-click adds audio settings to the sketch')
         fft.onclick = () => {
-            const audio = this.audio()
-            if (!audio || typeof audio.show !== 'function') return
+            if (this.host.remote) {
+                // the host's FFT canvas draws on the projector — remote decks
+                // get their own little meter fed by streamed frames instead
+                this.fftShown = !this.fftShown
+                this.host.setFftStream(this.fftShown)
+                this.renderAll()
+                return
+            }
+            if (!this.host.audioShow(!this.fftShown)) return
             this.fftShown = !this.fftShown
-            try { this.fftShown ? audio.show() : audio.hide() } catch (e) { /* audio not ready */ }
             fft.classList.toggle('vj-on', this.fftShown)
         }
         fft.oncontextmenu = (e) => {
@@ -796,19 +753,20 @@ export default class VJPanel {
             this.openAudioMenu(d, this.hostRootFor(fft), fft)
         }
         rail.appendChild(fft)
+        if (this.host.remote && this.fftShown) rail.appendChild(this.renderFftMeter(d))
 
         // stage view: drop the code/console/toolbar overlay, keep visuals + deck.
         // lit = code visible, matching the FFT button (lit = monitor visible)
-        const codeBtn = el(d, 'button', 'vj-fft vj-codebtn' + (this.state.showCode !== false ? ' vj-on' : ''), 'CODE')
+        const codeBtn = el(d, 'button', 'vj-fft vj-codebtn' + (this.host.getShowCode() ? ' vj-on' : ''), 'CODE')
         codeBtn.title = this.tr('panel.hide-code', 'show/hide the code overlay (visuals and deck stay)')
         codeBtn.onclick = () => {
-            this.emit('ui: toggle code')
-            codeBtn.classList.toggle('vj-on', this.state.showCode !== false)
+            this.host.toggleCode()
+            codeBtn.classList.toggle('vj-on', this.host.getShowCode())
         }
         rail.appendChild(codeBtn)
 
         // aux windows can't see the main tab's canvas — offer a live preview
-        if (isAux && this.captureStream()) {
+        if (isAux && this.host.captureStream()) {
             const prev = el(d, 'button', 'vj-fft' + (this.previewOn ? ' vj-on' : ''), '◉ LIVE')
             prev.title = this.tr('panel.preview', 'show the visuals live in this window (the stream pauses while the hydra tab is hidden)')
             prev.onclick = () => {
@@ -844,6 +802,29 @@ export default class VJPanel {
             rail.appendChild(close)
         }
         return rail
+    }
+
+    // tiny 4-band meter for remote decks (frames streamed by the host at a
+    // few Hz — enough to see the beat land without touching the projector)
+    renderFftMeter(d) {
+        const wrap = el(d, 'div', 'vj-fftmeter')
+        const bars = []
+        for (let i = 0; i < 4; i++) {
+            const bar = el(d, 'div', 'vj-fftbar')
+            bar.appendChild(el(d, 'div', 'vj-fftbar-fill'))
+            bars.push(bar)
+            wrap.appendChild(bar)
+        }
+        if (this.host.onFftFrame) {
+            this.host.onFftFrame((bins) => {
+                if (!wrap.isConnected) return false // deregister after a re-render
+                bins.slice(0, 4).forEach((v, i) => {
+                    bars[i].firstChild.style.height = Math.round(Math.min(1, Math.max(0, v)) * 100) + '%'
+                })
+                return true
+            })
+        }
+        return wrap
     }
 
     renderStatement(d, root, stmt) {
@@ -929,8 +910,7 @@ export default class VJPanel {
             live: (v) => {
                 current = norm(v)
                 valueEl.textContent = fmtShort(current)
-                const audio = this.audio()
-                if (audio && typeof audio[stmt.fn] === 'function') try { audio[stmt.fn](current) } catch (e) { /* audio not ready */ }
+                this.host.audioCall(stmt.fn, current)
             },
             commit: (v) => this.applyQuiet(edits.setNumber(stmt.arg, norm(v)))
         })
@@ -938,8 +918,7 @@ export default class VJPanel {
             get: () => current,
             set: (v) => {
                 current = norm(v)
-                const audio = this.audio()
-                if (audio && typeof audio[stmt.fn] === 'function') try { audio[stmt.fn](current) } catch (e) { /* audio not ready */ }
+                this.host.audioCall(stmt.fn, current)
                 this.applyQuiet(edits.setNumber(stmt.arg, current))
             }
         })
@@ -1163,18 +1142,15 @@ export default class VJPanel {
     }
 
     // evaluate the expression once at the current time/mouse state and pin
-    // the result into the code as a plain number (which renders as a fader)
+    // the result into the code as a plain number (which renders as a fader).
+    // async because a remote host round-trips the eval to the renderer.
     freezeExpr(arg, input) {
-        let v = null
-        try {
-            const fn = window.eval('(' + arg.text + ')')
-            if (typeof fn === 'function') v = fn({ time: window.time || 0, bpm: window.bpm || 30 })
-            else if (typeof fn === 'number') v = fn
-        } catch (e) { /* fall through to default */ }
-        if (typeof v !== 'number' || !isFinite(v)) {
-            v = input && typeof input.default === 'number' && isFinite(input.default) ? input.default : 0
-        }
-        this.apply({ from: arg.range[0], to: arg.range[1], text: fmtNumber(v) })
+        this.host.evalExpr(arg.text, (v) => {
+            if (typeof v !== 'number' || !isFinite(v)) {
+                v = input && typeof input.default === 'number' && isFinite(input.default) ? input.default : 0
+            }
+            this.apply({ from: arg.range[0], to: arg.range[1], text: fmtNumber(v) })
+        })
     }
 
     appendFaderParam(d, rowEl, step, input, argIdx, arg) {
@@ -1729,7 +1705,8 @@ export default class VJPanel {
     renderGhostSpeedRow(d) {
         const rowEl = el(d, 'div', 'vj-setup-row vj-ghostrow')
         rowEl.appendChild(el(d, 'label', 'vj-label', 'speed'))
-        let current = typeof window.speed === 'number' ? window.speed : 1
+        const global = this.host.getGlobal('speed')
+        let current = typeof global === 'number' ? global : 1
         const valueEl = el(d, 'span', 'vj-value vj-ghost', fmtShort(current))
         const track = this.makeFader(d, {
             get: () => current,
@@ -1737,10 +1714,10 @@ export default class VJPanel {
             live: (v) => {
                 current = v
                 valueEl.textContent = fmtShort(v)
-                window.speed = v
+                this.host.setGlobal('speed', v)
             },
             commit: (v) => {
-                window.speed = parseFloat(fmtNumber(v))
+                this.host.setGlobal('speed', parseFloat(fmtNumber(v)))
                 this.applyQuiet({ from: 0, to: 0, text: `speed = ${fmtNumber(v)}\n` })
             }
         })
@@ -1748,7 +1725,7 @@ export default class VJPanel {
             get: () => current,
             set: (v) => {
                 current = v
-                window.speed = parseFloat(fmtNumber(v))
+                this.host.setGlobal('speed', parseFloat(fmtNumber(v)))
                 this.applyQuiet({ from: 0, to: 0, text: `speed = ${fmtNumber(v)}\n` })
             }
         })
@@ -1768,12 +1745,12 @@ export default class VJPanel {
             live: (v) => {
                 current = v
                 valueEl.textContent = fmtShort(v)
-                window[stmt.sub] = v // speed/bpm are live globals — instant preview
+                this.host.setGlobal(stmt.sub, v) // speed/bpm are live globals — instant preview
             },
             commit: (v) => {
                 // the global already carries the value — write the text without
                 // re-evaluating (keeps initCam sketches from re-prompting)
-                window[stmt.sub] = parseFloat(fmtNumber(v))
+                this.host.setGlobal(stmt.sub, parseFloat(fmtNumber(v)))
                 this.applyQuiet(edits.setNumber(stmt.arg, v))
             }
         })
@@ -1782,7 +1759,7 @@ export default class VJPanel {
             set: (v) => {
                 current = v
                 valueEl.textContent = fmtShort(v)
-                window[stmt.sub] = parseFloat(fmtNumber(v))
+                this.host.setGlobal(stmt.sub, parseFloat(fmtNumber(v)))
                 this.applyQuiet(edits.setNumber(stmt.arg, v))
             }
         })
@@ -1803,14 +1780,7 @@ export default class VJPanel {
     }
 
     jumpToRange(range) {
-        const cm = this.cm
-        if (!cm) return
-        const from = cm.posFromIndex(range[0])
-        const to = cm.posFromIndex(range[1])
-        cm.setSelection(from, to)
-        cm.focus()
-        const editor = this.state.editor && this.state.editor.editor
-        if (editor && editor.flashCode) editor.flashCode(from, to)
+        this.host.jumpToRange(range)
     }
 
     // ------------------------------------------------------- palette + menus

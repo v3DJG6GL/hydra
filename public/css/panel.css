@@ -1116,3 +1116,29 @@
   #vj-dock { max-height: 60vh; }
   .vj-brand { display: none; }
 }
+
+/* ---------- remote deck ---------- */
+
+/* deck-local FFT meter (remote only): 4 bands streamed from the host */
+.vj-fftmeter {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 18px;
+  padding: 0 2px;
+}
+.vj-fftbar {
+  position: relative;
+  width: 5px;
+  height: 100%;
+  background: var(--vj-chassis);
+  border: 1px solid var(--vj-line);
+  display: flex;
+  align-items: flex-end;
+}
+.vj-fftbar-fill {
+  width: 100%;
+  height: 0%;
+  background: var(--vj-armed);
+  transition: height 90ms linear;
+}
