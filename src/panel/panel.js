@@ -1,0 +1,1756 @@
+// The VJ deck controller + host-agnostic renderer. One instance owns the sketch
+// model and renders into any number of hosts (the in-page dock, the pop-out
+// window) as plain DOM — deliberately NOT routed through choo's app-wide
+// morphing so 60Hz fader gestures never re-render the app.
+import { buildModel, freeOutput } from './sketch-model.js'
+import { getTransforms, grouped, fmtNumber, fmtShort, INT_PARAMS } from './metadata.js'
+import { edits, applyEdit, applyQuietEdit } from './patcher.js'
+import LiveBind from './live-bind.js'
+import MidiControl from './midi.js'
+import { loadScenes, saveScenes, captureThumb, SLOT_COUNT, loadCycleSecs, saveCycleSecs } from './scenes.js'
+import { openPopup, STYLE_MATCH } from './popup.js'
+
+const CHANNEL_CLASS = { o0: 'ch-o0', o1: 'ch-o1', o2: 'ch-o2', o3: 'ch-o3' }
+const TAG_ICONS = { fn: 'ƒ', array: '[ ]', time: '◷', mouse: '☩', audio: '∿', math: 'π' }
+const SOURCE_FNS = { initCam: 'camera', initScreen: 'screen', initVideo: 'video', initImage: 'image' }
+
+// a.setX(n) audio settings; def doubles as the insert value and the fader's mid-track anchor
+const AUDIO_SETTINGS = {
+    setSmooth: { label: 'smooth', def: 0.4 },
+    setScale: { label: 'scale', def: 10 },
+    setBins: { label: 'bins', def: 4, int: true },
+    setCutoff: { label: 'cutoff', def: 2 }
+}
+// easing names hydra-synth's array interpolation understands
+const EASINGS = [
+    'linear', 'sin',
+    'easeInQuad', 'easeOutQuad', 'easeInOutQuad',
+    'easeInCubic', 'easeOutCubic', 'easeInOutCubic',
+    'easeInQuart', 'easeOutQuart', 'easeInOutQuart',
+    'easeInQuint', 'easeOutQuint', 'easeInOutQuint'
+]
+
+function el(d, tag, cls, text) {
+    const e = d.createElement(tag)
+    if (cls) e.className = cls
+    if (text != null) e.textContent = text
+    return e
+}
+
+export default class VJPanel {
+    constructor(state, emit) {
+        this.state = state
+        this.emit = emit
+        this.lb = new LiveBind()
+        this.scenes = loadScenes()
+        this.cycle = { on: false, timer: null, secs: loadCycleSecs(), pos: -1 }
+        this.midi = new MidiControl(this)
+        this.fftShown = false
+        // knobs mapped in an earlier session should work without re-arming
+        if (this.midi.hasMappings()) this.midi.enable()
+        this.model = null
+        this.outOfSync = false
+        this.parseError = null
+        this.transforms = getTransforms()
+        this.dockRoot = null
+        this.popupWin = null
+        this.popupRoot = null
+        this.pipWin = null
+        this.pipRoot = null
+    }
+
+    get cm() {
+        return this.state.editor && this.state.editor.editor && this.state.editor.editor.cm
+    }
+
+    tr(key, fallback) {
+        try {
+            const v = this.state.translation.t(key)
+            return v && v !== key ? v : fallback
+        } catch (e) { return fallback }
+    }
+
+    ctx() {
+        return {
+            cm: this.cm,
+            emit: this.emit,
+            getModel: () => (this.outOfSync ? null : this.model),
+            rebuild: () => this.rebuild()
+        }
+    }
+
+    apply(edit, opts) {
+        return applyEdit(this.ctx(), edit, opts)
+    }
+
+    // text-only commit for values already live on screen (uniform or global)
+    applyQuiet(edit) {
+        return applyQuietEdit(this.ctx(), edit)
+    }
+
+    rebuild() {
+        const cm = this.cm
+        if (!cm) return
+        this.transforms = getTransforms()
+        const res = buildModel(cm.getValue(), this.transforms)
+        if (res.ok) {
+            this.model = res
+            this.outOfSync = false
+            this.parseError = null
+        } else {
+            this.outOfSync = true
+            this.parseError = res.error
+        }
+        // live bindings re-arm lazily (LiveBind.ensure) on the next gesture or
+        // MIDI message — no eager shadow re-eval here, so rebuilds stay free of
+        // setup side effects (camera prompts etc.)
+        this.renderAll()
+    }
+
+    attachDock(root) {
+        this.dockRoot = root
+        this.attachSceneKeys(root)
+        if (!root.__vjFocus) {
+            root.__vjFocus = true
+            root.tabIndex = -1
+            root.addEventListener('pointerup', () => {
+                const active = root.ownerDocument.activeElement
+                if (!root.contains(active)) root.focus({ preventScroll: true })
+            })
+        }
+    }
+
+    hostRootFor(node) {
+        return node.closest('.vj-panel') || this.dockRoot
+    }
+
+    // direct DOM readout update for MIDI-driven params (no re-render per message)
+    flashParamValue(path, value) {
+        const sel = `[data-path="${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"] .vj-value`
+        ;[this.dockRoot, this.popupRoot].forEach((root) => {
+            if (!root) return
+            const valueEl = root.querySelector(sel)
+            if (valueEl) valueEl.textContent = fmtShort(value)
+        })
+    }
+
+    renderAll() {
+        // a re-render invalidates any open popover's anchor (and would orphan
+        // its node + document listener when the root is wiped) — close it first
+        this.closePopover()
+        if (this.dockRoot && !this.state.panel.popup && !this.state.panel.pip) this.renderInto(this.dockRoot)
+        if (this.popupRoot && this.popupWin && !this.popupWin.closed) this.renderInto(this.popupRoot)
+        if (this.pipRoot && this.pipWin) this.renderInto(this.pipRoot)
+    }
+
+    // --------------------------------------------- document picture-in-picture
+
+    // Chromium-line browsers: float the deck in a small always-on-top window.
+    // Unlike the pop-out tab this never hides the hydra tab, so visuals keep
+    // rendering. Feature-detected; the button only appears when available.
+    async openPip() {
+        if (this.pipWin) return
+        const api = window.documentPictureInPicture
+        if (!api) return
+        try {
+            const win = await api.requestWindow({ width: 480, height: 620 })
+            const doc = win.document
+            Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+                .filter((link) => STYLE_MATCH.test(link.href))
+                .forEach((link) => {
+                    const copy = doc.createElement('link')
+                    copy.rel = 'stylesheet'
+                    copy.href = link.href
+                    doc.head.appendChild(copy)
+                })
+            doc.body.className = 'vj-popup-body'
+            const rootEl = doc.createElement('div')
+            rootEl.id = 'vj-pip-root'
+            rootEl.className = 'vj-panel vj-popup'
+            doc.body.appendChild(rootEl)
+            this.pipWin = win
+            this.pipRoot = rootEl
+            this.attachSceneKeys(doc)
+            this.state.panel.pip = true
+            this.state.panel.open = true
+            win.addEventListener('pagehide', () => {
+                this.pipWin = null
+                this.pipRoot = null
+                this.state.panel.pip = false
+                this.renderAll()
+                this.emit('render')
+            })
+            this.renderAll()
+            this.emit('render')
+        } catch (e) {
+            if (window._reportError) window._reportError(e)
+        }
+    }
+
+    // ---------------------------------------------------------------- popup
+
+    popout() {
+        // repeat clicks focus the existing deck tab instead of opening another
+        if (this.popupWin && !this.popupWin.closed) {
+            this.focusPopup()
+            return
+        }
+        const win = openPopup()
+        if (!win) {
+            if (window._reportError) {
+                window._reportError(new Error('could not open the deck tab (popup blocked?) — allow popups for this site and try again'))
+            }
+            return
+        }
+        this.adopt(win)
+    }
+
+    adopt(win) {
+        win.__vjAdoptedGen = window.__vjGen
+        this.popupWin = win
+        this.popupRoot = win.document.getElementById('vj-popup-root')
+        this.attachSceneKeys(win.document)
+        this.state.panel.popup = true
+        this.state.panel.open = true
+        this.renderAll()
+        this.emit('render')
+        clearInterval(this._closePoll)
+        this._closePoll = setInterval(() => {
+            if (!this.popupWin || this.popupWin.closed) {
+                clearInterval(this._closePoll)
+                this.popupWin = null
+                this.popupRoot = null
+                this.state.panel.popup = false
+                this.renderAll()
+                this.emit('render')
+            }
+        }, 400)
+    }
+
+    focusPopup() {
+        if (this.popupWin && !this.popupWin.closed) this.popupWin.focus()
+    }
+
+    // ---------------------------------------------------------------- scenes
+
+    renderScenes(d) {
+        const strip = el(d, 'div', 'vj-scenes')
+        const current = this.cm ? this.cm.getValue() : null
+        this.scenes.forEach((scene, i) => {
+            const slot = el(d, 'button', 'vj-scene' + (scene ? ' vj-filled' : '') +
+                (scene && current !== null && scene.code === current ? ' vj-active' : '') +
+                (this.midi.isSceneMapped(i) ? ' vj-midimapped' : '') +
+                (this.midi.isLearningScene(i) ? ' vj-learning' : ''))
+            slot.appendChild(el(d, 'span', 'vj-scene-num', String(i + 1)))
+            if (scene && scene.thumb) {
+                const img = el(d, 'img', 'vj-scene-thumb')
+                img.src = scene.thumb
+                img.alt = ''
+                slot.appendChild(img)
+            } else if (scene) {
+                slot.appendChild(el(d, 'span', 'vj-scene-code', scene.code.replace(/\s+/g, ' ').slice(0, 18)))
+            }
+            slot.title = scene
+                ? this.tr('panel.scene-recall', 'recall scene (key 1-8) — shift+click overwrites, right-click for menu')
+                : this.tr('panel.scene-save', 'save current sketch here (shift+1-8) — right-click for menu')
+            slot.onclick = (e) => {
+                if (!scene || e.shiftKey) this.saveScene(i)
+                else this.recallScene(i)
+            }
+            slot.oncontextmenu = (e) => {
+                e.preventDefault()
+                this.openSceneMenu(d, this.hostRootFor(slot), slot, i, scene)
+            }
+            strip.appendChild(slot)
+        })
+
+        const tools = el(d, 'div', 'vj-scenes-tools')
+        const exp = el(d, 'button', 'vj-scenetool')
+        exp.appendChild(el(d, 'i', 'fas fa-download'))
+        exp.title = this.tr('panel.scenes-export', 'export the scene bank as a json file')
+        exp.onclick = () => this.exportScenes()
+        tools.appendChild(exp)
+        const imp = el(d, 'button', 'vj-scenetool')
+        imp.appendChild(el(d, 'i', 'fas fa-upload'))
+        imp.title = this.tr('panel.scenes-import', 'import a scene bank json file (replaces all slots)')
+        imp.onclick = () => this.importScenes()
+        tools.appendChild(imp)
+        const cyc = el(d, 'button', 'vj-scenetool vj-cycle' + (this.cycle.on ? ' vj-on' : ''))
+        cyc.appendChild(el(d, 'i', 'fas ' + (this.cycle.on ? 'fa-stop' : 'fa-play')))
+        cyc.title = this.tr('panel.scenes-cycle', 'auto-cycle the saved scenes') + ` (${fmtNumber(this.cycle.secs)}s — ` +
+            this.tr('panel.scenes-cycle-pace', 'right-click sets the pace') + ')'
+        cyc.onclick = () => this.toggleCycle()
+        cyc.oncontextmenu = (e) => {
+            e.preventDefault()
+            this.openCyclePace(d, this.hostRootFor(cyc), cyc)
+        }
+        tools.appendChild(cyc)
+        strip.appendChild(tools)
+        return strip
+    }
+
+    // pace editor for the scene auto-cycle
+    openCyclePace(d, root, anchor) {
+        this.openPopover(d, root, anchor, (pop) => {
+            pop.classList.add('vj-rangeform')
+            const label = el(d, 'label', null, this.tr('panel.cycle-every', 'every (s)'))
+            const input = el(d, 'input')
+            input.type = 'number'
+            input.min = '1'
+            input.step = 'any'
+            input.value = fmtNumber(this.cycle.secs)
+            label.appendChild(input)
+            pop.appendChild(label)
+            const ok = el(d, 'button', 'vj-menu-item', this.tr('panel.cycle-set', 'set pace'))
+            const commit = () => {
+                const v = parseFloat(input.value)
+                if (isFinite(v) && v >= 1) this.setCycleSecs(v)
+                this.closePopover()
+                this.renderAll() // refresh the tooltip
+            }
+            ok.onclick = commit
+            input.onkeydown = (e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') commit()
+                if (e.key === 'Escape') this.closePopover()
+            }
+            pop.appendChild(ok)
+            setTimeout(() => input.focus(), 0)
+        })
+    }
+
+    openSceneMenu(d, root, anchor, i, scene) {
+        const items = []
+        if (this.midi.available) {
+            if (this.midi.isLearningScene(i)) {
+                items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
+            } else {
+                items.push({ label: this.tr('panel.midi-learn-pad', 'midi learn (hit a pad or key)'), fn: () => this.midi.startLearnScene(i) })
+            }
+            if (this.midi.isSceneMapped(i)) {
+                items.push({ label: this.tr('panel.midi-unlearn', 'midi unlearn'), fn: () => this.midi.unlearnScene(i), danger: true })
+            }
+        }
+        if (scene) {
+            items.push({ label: this.tr('panel.scene-clear', 'clear slot'), fn: () => this.clearScene(i), danger: true })
+        }
+        if (!items.length) return
+        this.openPopover(d, root, anchor, (pop) => {
+            items.forEach((item) => {
+                const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : ''), item.label)
+                b.onclick = (e) => {
+                    e.stopPropagation()
+                    this.closePopover()
+                    item.fn()
+                }
+                pop.appendChild(b)
+            })
+        })
+    }
+
+    exportScenes() {
+        const data = JSON.stringify({ app: 'hydra-vj-deck', version: 1, scenes: this.scenes }, null, 2)
+        const blob = new Blob([data], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'hydra-scenes.json'
+        a.click()
+        setTimeout(() => URL.revokeObjectURL(url), 5000)
+    }
+
+    importScenes() {
+        const input = document.createElement('input')
+        input.type = 'file'
+        input.accept = '.json,application/json'
+        input.onchange = () => {
+            const file = input.files && input.files[0]
+            if (!file) return
+            const reader = new FileReader()
+            reader.onload = () => {
+                try {
+                    const parsed = JSON.parse(reader.result)
+                    const arr = Array.isArray(parsed) ? parsed
+                        : parsed && Array.isArray(parsed.scenes) ? parsed.scenes : null
+                    if (!arr) throw new Error('not a scene bank file')
+                    this.scenes = arr.slice(0, SLOT_COUNT).map((s) => s && typeof s.code === 'string'
+                        ? { code: s.code, thumb: typeof s.thumb === 'string' ? s.thumb : null, savedAt: s.savedAt || Date.now() }
+                        : null)
+                    while (this.scenes.length < SLOT_COUNT) this.scenes.push(null)
+                    saveScenes(this.scenes)
+                    this.renderAll()
+                } catch (e) {
+                    if (window._reportError) window._reportError(new Error('scene bank import failed: ' + e.message))
+                }
+            }
+            reader.readAsText(file)
+        }
+        input.click()
+    }
+
+    saveScene(i) {
+        const cm = this.cm
+        if (!cm) return
+        const code = cm.getValue()
+        this.scenes[i] = { code, thumb: null, savedAt: Date.now() }
+        saveScenes(this.scenes)
+        this.renderAll()
+        const hydra = this.state.hydra && this.state.hydra.hydra
+        captureThumb(hydra, (thumb) => {
+            if (thumb && this.scenes[i] && this.scenes[i].code === code) {
+                this.scenes[i].thumb = thumb
+                saveScenes(this.scenes)
+                this.renderAll()
+            }
+        })
+    }
+
+    recallScene(i, opts) {
+        const scene = this.scenes[i]
+        if (!scene) return
+        this.cycle.pos = i // manual recalls steer the auto-cycle too
+        if (opts && opts.replaceURL) {
+            // auto-cycle recalls must not flood the browser history
+            this.emit('editor: load code', scene.code)
+            this.emit('repl: eval', scene.code)
+            this.emit('gallery: save to URL', scene.code, { replace: true })
+        } else {
+            this.emit('load and eval code', scene.code, true)
+        }
+        this.rebuild()
+    }
+
+    clearScene(i) {
+        this.scenes[i] = null
+        saveScenes(this.scenes)
+        this.renderAll()
+    }
+
+    // ---- auto-cycle: recall the filled slots in order every N seconds
+
+    toggleCycle() {
+        if (this.cycle.on) this.stopCycle()
+        else this.startCycle()
+    }
+
+    startCycle() {
+        if (!this.scenes.some(Boolean)) return
+        this.cycle.on = true
+        this.cycleTick()
+        this.cycle.timer = setInterval(() => this.cycleTick(), this.cycle.secs * 1000)
+        this.renderAll()
+    }
+
+    stopCycle() {
+        if (this.cycle.timer) clearInterval(this.cycle.timer)
+        this.cycle.timer = null
+        this.cycle.on = false
+        this.renderAll()
+    }
+
+    setCycleSecs(secs) {
+        this.cycle.secs = secs
+        saveCycleSecs(secs)
+        if (this.cycle.on) { // restart at the new pace
+            clearInterval(this.cycle.timer)
+            this.cycle.timer = setInterval(() => this.cycleTick(), secs * 1000)
+        }
+    }
+
+    cycleTick() {
+        const filled = []
+        this.scenes.forEach((s, i) => { if (s) filled.push(i) })
+        if (!filled.length) { this.stopCycle(); return }
+        const next = filled.find((i) => i > this.cycle.pos)
+        this.recallScene(next !== undefined ? next : filled[0], { replaceURL: true })
+    }
+
+    // keys 1-8 recall, shift+1-8 save — only while the deck (dock or popup) has focus
+    attachSceneKeys(target) {
+        if (!target || target.__vjSceneKeys) return
+        target.__vjSceneKeys = true
+        target.addEventListener('keydown', (e) => {
+            const m = /^Digit([1-8])$/.exec(e.code)
+            if (!m) return
+            if (e.ctrlKey || e.altKey || e.metaKey) return
+            const tag = e.target && e.target.tagName
+            if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return
+            e.preventDefault()
+            const i = parseInt(m[1], 10) - 1
+            if (e.shiftKey) this.saveScene(i)
+            else this.recallScene(i)
+        })
+    }
+
+    // ---------------------------------------------------------------- render
+
+    renderInto(root) {
+        const d = root.ownerDocument
+        root.textContent = ''
+        root.appendChild(this.renderToprail(d, root))
+        root.appendChild(this.renderScenes(d))
+        const body = el(d, 'div', 'vj-body')
+        const model = this.model
+        if (model && model.statements.length > 0) {
+            if (!model.statements.some((s) => s.kind === 'setup' && s.sub === 'speed')) {
+                body.appendChild(this.renderGhostSpeedRow(d))
+            }
+            model.statements.forEach((stmt) => body.appendChild(this.renderStatement(d, root, stmt)))
+        } else {
+            const empty = el(d, 'div', 'vj-empty', this.tr('panel.empty', 'no signal'))
+            body.appendChild(empty)
+        }
+        const addRow = el(d, 'div', 'vj-addrow')
+        const add = el(d, 'button', 'vj-newchain')
+        add.appendChild(el(d, 'span', 'vj-pp-dot'))
+        add.appendChild(el(d, 'span', null, ' ' + this.tr('panel.new-chain', 'new chain')))
+        add.onclick = () => {
+            const target = this.model ? freeOutput(this.model) : 'o0'
+            this.apply(edits.appendChain(this.model ? this.model.text : this.cm.getValue(), target))
+        }
+        addRow.appendChild(add)
+        const freeSlot = ['s0', 's1', 's2', 's3'].find((s) => !(model && model.statements.some(
+            (st) => st.kind === 'setup' && st.sub === 'sourceInit' && st.slot === s)))
+        if (freeSlot) {
+            const addSrc = el(d, 'button', 'vj-newchain')
+            addSrc.appendChild(el(d, 'span', 'vj-pp-dot'))
+            addSrc.appendChild(el(d, 'span', null, ' ' + this.tr('panel.add-source', 'source')))
+            addSrc.title = this.tr('panel.add-source-hint', 'add an external source (camera / screen / video / image)')
+            addSrc.onclick = () => this.apply({ from: 0, to: 0, text: `${freeSlot}.initCam(0)\n` })
+            addRow.appendChild(addSrc)
+        }
+        body.appendChild(addRow)
+        root.appendChild(body)
+        if (this.outOfSync) {
+            root.classList.add('vj-out-of-sync')
+            const overlay = el(d, 'div', 'vj-sync-overlay')
+            overlay.appendChild(el(d, 'div', 'vj-sync-msg', this.tr('panel.out-of-sync', 'out of sync — code does not parse')))
+            overlay.appendChild(el(d, 'div', 'vj-sync-err', this.parseError || ''))
+            root.appendChild(overlay)
+        } else {
+            root.classList.remove('vj-out-of-sync')
+        }
+    }
+
+    renderToprail(d, root) {
+        const rail = el(d, 'div', 'vj-toprail')
+        rail.appendChild(el(d, 'span', 'vj-brand', 'HYDRA VJ DECK'))
+
+        const hush = el(d, 'button', 'vj-hush', 'HUSH')
+        hush.title = this.tr('panel.hush', 'stop all outputs (code stays)')
+        hush.onclick = () => this.emit('repl: eval', 'hush()')
+        rail.appendChild(hush)
+
+        const fft = el(d, 'button', 'vj-fft' + (this.fftShown ? ' vj-on' : ''), '∿ FFT')
+        fft.title = this.tr('panel.fft', 'toggle the audio FFT monitor — right-click adds audio settings to the sketch')
+        fft.onclick = () => {
+            this.fftShown = !this.fftShown
+            this.emit('repl: eval', `if (typeof a !== 'undefined') a.${this.fftShown ? 'show' : 'hide'}()`)
+            fft.classList.toggle('vj-on', this.fftShown)
+        }
+        fft.oncontextmenu = (e) => {
+            e.preventDefault()
+            this.openAudioMenu(d, this.hostRootFor(fft), fft)
+        }
+        rail.appendChild(fft)
+
+        // stage view: drop the code/console/toolbar overlay, keep visuals + deck
+        const codeBtn = el(d, 'button', 'vj-fft vj-codebtn' + (this.state.showCode === false ? ' vj-on' : ''), 'CODE')
+        codeBtn.title = this.tr('panel.hide-code', 'show/hide the code overlay (visuals and deck stay)')
+        codeBtn.onclick = () => {
+            this.emit('ui: toggle code')
+            codeBtn.classList.toggle('vj-on', this.state.showCode === false)
+        }
+        rail.appendChild(codeBtn)
+
+        const spacer = el(d, 'div', 'vj-spacer')
+        rail.appendChild(spacer)
+
+        const isAux = root === this.popupRoot || root === this.pipRoot
+        if (!isAux) {
+            const pop = el(d, 'button', 'vj-railbtn')
+            pop.appendChild(el(d, 'i', 'fas fa-external-link-alt'))
+            pop.title = this.tr('panel.pop-out', 'open deck in a new tab (drag it out for a second screen; visuals pause while the hydra tab is hidden)')
+            pop.onclick = () => this.emit('panel: popout')
+            rail.appendChild(pop)
+
+            if (window.documentPictureInPicture) {
+                const pip = el(d, 'button', 'vj-railbtn')
+                pip.appendChild(el(d, 'i', 'fas fa-window-restore'))
+                pip.title = this.tr('panel.pip', 'float the deck in a small always-on-top window (visuals keep running)')
+                pip.onclick = () => this.openPip()
+                rail.appendChild(pip)
+            }
+
+            const close = el(d, 'button', 'vj-railbtn')
+            close.appendChild(el(d, 'i', 'fas fa-times'))
+            close.title = this.tr('panel.close', 'close panel (ctrl+shift+y)')
+            close.onclick = () => this.emit('panel: toggle')
+            rail.appendChild(close)
+        }
+        return rail
+    }
+
+    renderStatement(d, root, stmt) {
+        if (stmt.kind === 'chain') return this.renderStrip(d, root, stmt)
+        if (stmt.kind === 'render') return this.renderRenderRow(d, stmt)
+        if (stmt.kind === 'setup' && (stmt.sub === 'speed' || stmt.sub === 'bpm')) return this.renderGlobalRow(d, stmt)
+        if (stmt.kind === 'setup' && stmt.sub === 'audioSet' && AUDIO_SETTINGS[stmt.fn]) return this.renderAudioSetRow(d, stmt)
+        if (stmt.kind === 'setup' && stmt.sub === 'sourceInit' && SOURCE_FNS[stmt.fn]) return this.renderSourceRow(d, stmt)
+        return this.renderRawRow(d, stmt)
+    }
+
+    // s0.initCam()/initScreen()/initVideo(url)/initImage(url) -> editable row
+    renderSourceRow(d, stmt) {
+        const rowEl = el(d, 'div', 'vj-setup-row vj-source-row')
+        rowEl.appendChild(el(d, 'label', 'vj-label vj-source-slot', stmt.slot))
+
+        const rewrite = (fn, url, camIndex) => {
+            let call
+            if (fn === 'initCam') call = `${stmt.slot}.initCam(${camIndex || 0})`
+            else if (fn === 'initScreen') call = `${stmt.slot}.initScreen()`
+            else call = `${stmt.slot}.${fn}("${String(url || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`
+            this.apply({ from: stmt.range[0], to: stmt.range[1], text: call })
+        }
+
+        const sel = el(d, 'select', 'vj-refselect')
+        Object.entries(SOURCE_FNS).forEach(([fn, label]) => {
+            const o = el(d, 'option', null, label)
+            o.value = fn
+            if (fn === stmt.fn) o.selected = true
+            sel.appendChild(o)
+        })
+        sel.onchange = () => rewrite(sel.value, stmt.url, stmt.camIndex)
+        rowEl.appendChild(sel)
+
+        if (stmt.fn === 'initCam') {
+            const idxSel = el(d, 'select', 'vj-refselect')
+            for (let i = 0; i < 4; i++) {
+                const o = el(d, 'option', null, 'cam ' + i)
+                o.value = String(i)
+                if (i === (stmt.camIndex || 0)) o.selected = true
+                idxSel.appendChild(o)
+            }
+            idxSel.title = this.tr('panel.source-cam', 'camera device index')
+            idxSel.onchange = () => rewrite('initCam', null, parseInt(idxSel.value, 10))
+            rowEl.appendChild(idxSel)
+        }
+        if (stmt.fn === 'initVideo' || stmt.fn === 'initImage') {
+            const urlIn = el(d, 'input', 'vj-src-url')
+            urlIn.type = 'text'
+            urlIn.placeholder = 'https://…'
+            urlIn.value = stmt.url || ''
+            urlIn.title = this.tr('panel.source-url', 'media url — press enter to apply')
+            urlIn.onkeydown = (e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') rewrite(stmt.fn, urlIn.value, 0)
+            }
+            rowEl.appendChild(urlIn)
+        }
+
+        const spacer = el(d, 'div', 'vj-spacer')
+        rowEl.appendChild(spacer)
+        const rm = el(d, 'button', 'vj-source-remove')
+        rm.appendChild(el(d, 'i', 'fas fa-times'))
+        rm.title = this.tr('panel.remove-source', 'remove this source')
+        rm.onclick = () => this.apply(edits.removeStatement(stmt, this.model.text))
+        rowEl.appendChild(rm)
+        return rowEl
+    }
+
+    // a.setSmooth(0.4) etc -> fader row. calling the setter previews the value
+    // live, so the commit is a quiet splice like the speed/bpm rows
+    renderAudioSetRow(d, stmt) {
+        const meta = AUDIO_SETTINGS[stmt.fn]
+        const rowEl = el(d, 'div', 'vj-setup-row vj-audioset-row')
+        rowEl.appendChild(el(d, 'label', 'vj-label', 'audio ' + meta.label))
+        const valueEl = el(d, 'span', 'vj-value', fmtShort(stmt.arg.value))
+        let current = stmt.arg.value
+        const norm = (v) => (meta.int ? Math.max(1, Math.round(v)) : v)
+        const track = this.makeFader(d, {
+            get: () => current,
+            ref: Math.max(meta.def, 0.5),
+            int: !!meta.int,
+            live: (v) => {
+                current = norm(v)
+                valueEl.textContent = fmtShort(current)
+                if (window.a) try { window.a[stmt.fn](current) } catch (e) { /* audio not ready */ }
+            },
+            commit: (v) => this.applyQuiet(edits.setNumber(stmt.arg, norm(v)))
+        })
+        this.attachValueEdit(d, valueEl, {
+            get: () => current,
+            set: (v) => {
+                current = norm(v)
+                if (window.a) try { window.a[stmt.fn](current) } catch (e) { /* audio not ready */ }
+                this.applyQuiet(edits.setNumber(stmt.arg, current))
+            }
+        })
+        rowEl.appendChild(track)
+        rowEl.appendChild(valueEl)
+        rowEl.appendChild(el(d, 'div', 'vj-spacer'))
+        const rm = el(d, 'button', 'vj-source-remove')
+        rm.appendChild(el(d, 'i', 'fas fa-times'))
+        rm.title = this.tr('panel.remove-audioset', 'remove this setting (keeps its current value until reload)')
+        rm.onclick = () => this.apply(edits.removeStatement(stmt, this.model.text))
+        rowEl.appendChild(rm)
+        return rowEl
+    }
+
+    // FFT button right-click: add audio-setting rows the sketch doesn't have yet
+    openAudioMenu(d, root, anchor) {
+        const stmts = (this.model && this.model.statements) || []
+        const items = []
+        Object.entries(AUDIO_SETTINGS).forEach(([fn, meta]) => {
+            if (stmts.some((s) => s.kind === 'setup' && s.sub === 'audioSet' && s.fn === fn)) return
+            items.push({
+                label: this.tr('panel.audio-add-' + meta.label, '+ audio ' + meta.label),
+                fn: () => this.apply({ from: 0, to: 0, text: `a.${fn}(${fmtNumber(meta.def)})\n` })
+            })
+        })
+        if (!items.length) return
+        this.openPopover(d, root, anchor, (pop) => {
+            items.forEach((item) => {
+                const b = el(d, 'button', 'vj-menu-item', item.label)
+                b.onclick = (e) => {
+                    e.stopPropagation()
+                    this.closePopover()
+                    item.fn()
+                }
+                pop.appendChild(b)
+            })
+        })
+    }
+
+    renderStrip(d, root, stmt) {
+        const target = stmt.out ? stmt.out.target : null
+        const strip = el(d, 'div', 'vj-strip ' + (CHANNEL_CLASS[target] || 'ch-none'))
+
+        const railEl = el(d, 'div', 'vj-strip-rail')
+        railEl.appendChild(el(d, 'span', 'vj-strip-out', target || '—'))
+        const kill = el(d, 'button', 'vj-strip-kill')
+        kill.appendChild(el(d, 'i', 'fas fa-times'))
+        kill.title = this.tr('panel.remove-chain', 'remove this chain')
+        kill.onclick = () => this.apply(edits.removeStatement(stmt, this.model.text))
+        railEl.appendChild(kill)
+        strip.appendChild(railEl)
+
+        const row = this.renderChipsRow(d, root, stmt, { topLevel: true, stmt })
+        strip.appendChild(row)
+        return strip
+    }
+
+    // chainLike: {source, transforms, disabled} (+ .out when topLevel)
+    renderChipsRow(d, root, chainLike, opts) {
+        const row = el(d, 'div', 'vj-chips')
+        const byGap = new Map()
+        ;(chainLike.disabled || []).forEach((b) => {
+            const list = byGap.get(b.gapIdx) || []
+            list.push(b)
+            byGap.set(b.gapIdx, list)
+        })
+        const emitDisabled = (gap) => (byGap.get(gap) || []).forEach((b) =>
+            row.appendChild(this.renderBypassedChip(d, b)))
+        row.appendChild(this.renderChip(d, root, chainLike.source, chainLike, -1, opts))
+        row.appendChild(this.patchPoint(d, root, chainLike, 0))
+        emitDisabled(0)
+        chainLike.transforms.forEach((step, i) => {
+            row.appendChild(this.renderChip(d, root, step, chainLike, i, opts))
+            row.appendChild(this.patchPoint(d, root, chainLike, i + 1))
+            emitDisabled(i + 1)
+        })
+        if (opts.topLevel) row.appendChild(this.renderOutChip(d, chainLike))
+        return row
+    }
+
+    // a muted (commented-out) step: dim chip with re-enable + delete
+    renderBypassedChip(d, byp) {
+        const chip = el(d, 'div', 'vj-chip vj-bypassed')
+        const head = el(d, 'div', 'vj-chip-head')
+        head.appendChild(el(d, 'span', 'vj-chip-name', byp.name))
+        const on = el(d, 'button', 'vj-chip-menubtn vj-byp-on')
+        on.appendChild(el(d, 'i', 'fas fa-power-off'))
+        on.title = this.tr('panel.bypass-on', 're-enable this function')
+        on.onclick = () => this.apply(edits.enableBypassed(byp, this.model.text))
+        head.appendChild(on)
+        const rm = el(d, 'button', 'vj-chip-menubtn')
+        rm.appendChild(el(d, 'i', 'fas fa-times'))
+        rm.title = this.tr('panel.remove', 'remove')
+        rm.onclick = () => this.apply(edits.removeBypassed(byp))
+        head.appendChild(rm)
+        chip.appendChild(head)
+        const body = el(d, 'div', 'vj-chip-params')
+        const argsText = byp.argsText.replace(/\s+/g, ' ')
+        body.appendChild(el(d, 'span', 'vj-byp-args', argsText.length > 22 ? argsText.slice(0, 21) + '…' : argsText))
+        chip.appendChild(body)
+        return chip
+    }
+
+    renderChip(d, root, step, chainLike, index, opts) {
+        const isSource = index === -1
+        const type = step.meta ? step.meta.type : 'unknown'
+        const chip = el(d, 'div', 'vj-chip type-' + type + (isSource ? ' vj-chip-src' : ''))
+
+        const head = el(d, 'div', 'vj-chip-head')
+        head.appendChild(el(d, 'span', 'vj-chip-name', step.name))
+        const menuBtn = el(d, 'button', 'vj-chip-menubtn')
+        menuBtn.appendChild(el(d, 'i', 'fas fa-ellipsis-v'))
+        menuBtn.title = this.tr('panel.fn-menu', 'replace / duplicate / remove')
+        menuBtn.onclick = (e) => {
+            e.stopPropagation()
+            this.openChipMenu(d, root, menuBtn, step, chainLike, index, opts)
+        }
+        head.appendChild(menuBtn)
+        chip.appendChild(head)
+
+        const params = el(d, 'div', 'vj-chip-params')
+        const inputs = step.meta ? step.meta.inputs : step.args.map((a, i) => ({ name: 'arg' + i }))
+        inputs.forEach((input, i) => {
+            params.appendChild(this.renderParam(d, root, step, input, i, opts))
+        })
+        // extra args beyond metadata arity still shown (e.g. custom fns)
+        if (step.meta && step.args.length > step.meta.inputs.length) {
+            step.args.slice(step.meta.inputs.length).forEach((arg, j) => {
+                params.appendChild(this.renderParam(d, root, step, { name: 'arg' + (step.meta.inputs.length + j) }, step.meta.inputs.length + j, opts))
+            })
+        }
+        chip.appendChild(params)
+        // a chip hosting a nested chain or a sequencer must grow to fit it —
+        // the strip scrolls as a whole instead of the content clipping
+        if (params.querySelector('.vj-subchain, .vj-seq')) chip.classList.add('vj-wide')
+
+        if (!isSource) this.attachChipDrag(d, root, head, chip, chainLike, index)
+        return chip
+    }
+
+    renderParam(d, root, step, input, argIdx, opts) {
+        const rowEl = el(d, 'div', 'vj-param')
+        rowEl.appendChild(el(d, 'label', 'vj-label', input.name))
+        const arg = step.args[argIdx]
+        if (arg && arg.path) rowEl.dataset.path = arg.path
+
+        if (input.slot) {
+            const slotEl = this.renderSlot(d, root, step, input, argIdx, arg, opts)
+            // nested chains get the full chip width, label stacked above
+            if (slotEl.classList.contains('vj-subchain')) rowEl.classList.add('vj-stack')
+            rowEl.appendChild(slotEl)
+            return rowEl
+        }
+        if (!arg || arg.kind === 'number') {
+            this.appendFaderParam(d, rowEl, step, input, argIdx, arg)
+            return rowEl
+        }
+        if (arg.kind === 'outRef' || arg.kind === 'srcRef') {
+            rowEl.appendChild(this.makeRefSelect(d, arg.name, (name) => this.apply(edits.setRef(arg, name))))
+            return rowEl
+        }
+        if (arg.kind === 'chain') {
+            rowEl.classList.add('vj-stack')
+            rowEl.appendChild(this.renderSubchain(d, root, arg, opts))
+            return rowEl
+        }
+        if (arg.kind === 'arraySeq') {
+            rowEl.appendChild(this.renderArraySeq(d, arg))
+            return rowEl
+        }
+        if (arg.kind === 'audioBind') {
+            rowEl.classList.add('vj-bindparam')
+            rowEl.appendChild(this.renderAudioBind(d, input, arg))
+            return rowEl
+        }
+        if (arg.kind === 'mouseBind') {
+            rowEl.classList.add('vj-bindparam')
+            rowEl.appendChild(this.renderMouseBind(d, input, arg))
+            return rowEl
+        }
+        rowEl.appendChild(this.renderExprChip(d, arg, input))
+        return rowEl
+    }
+
+    renderSlot(d, root, step, input, argIdx, arg, opts) {
+        if (arg && arg.kind === 'chain') return this.renderSubchain(d, root, arg, opts)
+        if (arg && (arg.kind === 'outRef' || arg.kind === 'srcRef')) {
+            return this.makeRefSelect(d, arg.name, (name) => this.apply(edits.setRef(arg, name)))
+        }
+        if (arg) return this.renderExprChip(d, arg, input)
+        // slot the code omits: pick a ref to fill it
+        return this.makeRefSelect(d, '', (name) => {
+            if (name) this.apply(edits.ghostArg(step, argIdx, name))
+        }, true)
+    }
+
+    renderSubchain(d, root, arg, opts) {
+        const sub = el(d, 'div', 'vj-subchain')
+        sub.appendChild(this.renderChipsRow(d, root, arg, { topLevel: false }))
+        return sub
+    }
+
+    renderExprChip(d, arg, input) {
+        const wrap = el(d, 'div', 'vj-expr-wrap')
+        const chipEl = el(d, 'button', 'vj-expr')
+        const tags = (arg.tags || []).filter((t) => t !== 'fn').map((t) => TAG_ICONS[t]).filter(Boolean).join('')
+        chipEl.appendChild(el(d, 'span', 'vj-expr-badge', 'ƒ' + (tags ? ' ' + tags : '')))
+        const text = arg.text.replace(/^\(\)\s*=>\s*/, '')
+        const short = text.length > 24 ? text.slice(0, 23) + '…' : text
+        chipEl.appendChild(el(d, 'span', 'vj-expr-text', short))
+        chipEl.title = arg.text + '\n' + this.tr('panel.expr-hint', 'live expression — click to edit it in the code')
+        chipEl.onclick = () => this.jumpToRange(arg.range)
+        wrap.appendChild(chipEl)
+
+        const freeze = el(d, 'button', 'vj-expr-freeze')
+        freeze.appendChild(el(d, 'i', 'fas fa-thumbtack'))
+        freeze.title = this.tr('panel.freeze-expr', 'freeze to its current value — turns into a fader')
+        freeze.onclick = () => this.freezeExpr(arg, input)
+        wrap.appendChild(freeze)
+        return wrap
+    }
+
+    // evaluate the expression once at the current time/mouse state and pin
+    // the result into the code as a plain number (which renders as a fader)
+    freezeExpr(arg, input) {
+        let v = null
+        try {
+            const fn = window.eval('(' + arg.text + ')')
+            if (typeof fn === 'function') v = fn({ time: window.time || 0, bpm: window.bpm || 30 })
+            else if (typeof fn === 'number') v = fn
+        } catch (e) { /* fall through to default */ }
+        if (typeof v !== 'number' || !isFinite(v)) {
+            v = input && typeof input.default === 'number' && isFinite(input.default) ? input.default : 0
+        }
+        this.apply({ from: arg.range[0], to: arg.range[1], text: fmtNumber(v) })
+    }
+
+    appendFaderParam(d, rowEl, step, input, argIdx, arg) {
+        const isInt = INT_PARAMS.has(input.name)
+        const initial = arg ? arg.value : (typeof input.default === 'number' && isFinite(input.default) ? input.default : 0)
+        const valueEl = el(d, 'span', 'vj-value' + (arg ? '' : ' vj-ghost'), fmtShort(initial))
+
+        let liveKey = null
+        let current = initial
+        const track = this.makeFader(d, {
+            get: () => current,
+            // anchor the fill on the function's default, NOT the current value —
+            // a value-tracking ref would paint every fader at 50% forever
+            ref: Math.max(Math.abs(typeof input.default === 'number' ? input.default : 0), 0.5),
+            int: isInt,
+            start: () => {
+                if (arg && !arg.noLive && arg.path) liveKey = this.lb.ensure(this.ctx(), arg.path, arg.value)
+            },
+            live: (v) => {
+                current = v
+                valueEl.textContent = fmtShort(v)
+                if (liveKey) this.lb.set(liveKey, v)
+            },
+            commit: (v) => {
+                const edit = arg ? edits.setNumber(arg, v) : edits.ghostArg(step, argIdx, fmtNumber(v))
+                if (liveKey && arg && this.lb.isLive(arg.path)) {
+                    // the binding stays live for the next gesture; align the
+                    // uniform with the rounded literal and splice text only
+                    this.lb.set(liveKey, parseFloat(fmtNumber(v)))
+                    this.applyQuiet(edit)
+                } else {
+                    this.apply(edit, { replaceURL: true })
+                }
+                liveKey = null
+            }
+        })
+        if (arg && arg.kind === 'number' && arg.path && !arg.noLive) {
+            if (this.midi.isMapped(arg.path)) rowEl.classList.add('vj-midimapped')
+            if (this.midi.isLearning(arg.path)) track.classList.add('vj-learning')
+            track.oncontextmenu = (e) => {
+                e.preventDefault()
+                this.openParamMenu(d, this.hostRootFor(track), track, arg)
+            }
+        }
+        this.attachValueEdit(d, valueEl, {
+            get: () => current,
+            set: (v) => {
+                const edit = arg ? edits.setNumber(arg, v) : edits.ghostArg(step, argIdx, fmtNumber(v))
+                this.apply(edit)
+            }
+        })
+        rowEl.appendChild(track)
+        rowEl.appendChild(valueEl)
+    }
+
+    // click a value readout to type an exact number; Enter or clicking away
+    // (after a change) commits, Escape cancels. set(v) gets the parsed float.
+    attachValueEdit(d, valueEl, opts) {
+        valueEl.title = this.tr('panel.value-edit', 'click to type a value')
+        valueEl.onclick = () => {
+            const inp = el(d, 'input', 'vj-value-input')
+            inp.type = 'text'
+            inp.inputMode = 'decimal'
+            inp.value = fmtNumber(opts.get())
+            const initial = inp.value
+            valueEl.replaceWith(inp)
+            inp.focus()
+            inp.select()
+            let closed = false
+            const done = (commit) => {
+                if (closed) return
+                closed = true
+                const v = parseFloat(inp.value.replace(',', '.'))
+                inp.replaceWith(valueEl)
+                if (commit && isFinite(v)) opts.set(v)
+            }
+            inp.onkeydown = (e) => {
+                if (e.key === 'Enter') done(true)
+                if (e.key === 'Escape') done(false)
+                e.stopPropagation()
+            }
+            inp.onblur = () => done(inp.value !== initial)
+        }
+    }
+
+    // relative-drag fader. opts: get(), ref, int, start(), live(v), commit(v)
+    makeFader(d, opts) {
+        const track = el(d, 'div', 'vj-fader')
+        track.tabIndex = 0
+        track.setAttribute('role', 'slider')
+        const fill = el(d, 'div', 'vj-fader-fill')
+        track.appendChild(fill)
+
+        const paint = (v) => {
+            // asymptotic fill for unbounded params: 0 -> empty, the reference
+            // (the function's default) -> half, beyond keeps growing toward full
+            const ref = Math.max(opts.ref, 0.001)
+            const pct = Math.abs(v) / (Math.abs(v) + ref) * 100
+            fill.style.width = pct + '%'
+            track.classList.toggle('vj-neg', v < 0)
+            track.setAttribute('aria-valuenow', fmtNumber(v))
+        }
+        paint(opts.get())
+
+        let dragging = false
+        let moved = false
+        let startX = 0
+        let startV = 0
+        track.onpointerdown = (e) => {
+            if (e.button !== 0) return
+            dragging = true
+            moved = false
+            startX = e.clientX
+            startV = opts.get()
+            track.setPointerCapture(e.pointerId)
+            track.classList.add('vj-armed')
+            if (opts.start) opts.start()
+            e.preventDefault()
+        }
+        track.onpointermove = (e) => {
+            if (!dragging) return
+            moved = true
+            const scale = Math.max(Math.abs(startV), opts.ref, 0.001)
+            let v = startV + (e.clientX - startX) / 150 * scale * (e.shiftKey ? 0.1 : 1)
+            if (opts.int) v = Math.round(v)
+            v = parseFloat(v.toFixed(4))
+            opts.live(v)
+            paint(v)
+        }
+        const finish = (e) => {
+            if (!dragging) return
+            dragging = false
+            track.classList.remove('vj-armed')
+            try { track.releasePointerCapture(e.pointerId) } catch (err) {}
+            if (moved) opts.commit(opts.get())
+        }
+        track.onpointerup = finish
+        track.onpointercancel = finish
+        track.onkeydown = (e) => {
+            if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+            const dir = e.key === 'ArrowRight' ? 1 : -1
+            const scale = Math.max(Math.abs(opts.get()), opts.ref, 0.001)
+            let v = opts.get() + dir * scale * (e.shiftKey ? 0.01 : 0.05)
+            if (opts.int) v = opts.get() + dir
+            v = parseFloat(v.toFixed(4))
+            if (opts.start) opts.start()
+            opts.live(v)
+            paint(v)
+            opts.commit(v)
+            e.preventDefault()
+        }
+        return track
+    }
+
+    makeRefSelect(d, current, onChange, allowEmpty) {
+        const sel = el(d, 'select', 'vj-refselect')
+        if (allowEmpty) sel.appendChild(el(d, 'option', null, '—'))
+        const opts = ['o0', 'o1', 'o2', 'o3', 's0', 's1', 's2', 's3']
+        opts.forEach((name) => {
+            const o = el(d, 'option', null, name)
+            o.value = name
+            if (name === current) o.selected = true
+            sel.appendChild(o)
+        })
+        sel.onchange = () => onChange(sel.value)
+        return sel
+    }
+
+    // right-click menu on a fader: MIDI learn/unlearn/range, bind to audio/mouse
+    openParamMenu(d, root, anchor, arg) {
+        const items = []
+        if (this.midi.available) {
+            if (this.midi.isLearning(arg.path)) {
+                items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
+            } else {
+                items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob)'), fn: () => this.midi.startLearn(arg.path) })
+            }
+            if (this.midi.isMapped(arg.path)) {
+                items.push({
+                    label: this.tr('panel.midi-range', 'midi range…'),
+                    keepOpen: true,
+                    fn: () => this.openMidiRange(d, root, anchor, arg)
+                })
+                items.push({ label: this.tr('panel.midi-unlearn', 'midi unlearn'), fn: () => this.midi.unlearn(arg.path), danger: true })
+            }
+        }
+        items.push({
+            label: this.tr('panel.bind-audio', 'bind to audio (fft)'),
+            fn: () => {
+                const scale = fmtNumber(Math.max(Math.abs(arg.value) * 2, 0.5))
+                this.apply({ from: arg.range[0], to: arg.range[1], text: `() => a.fft[0] * ${scale}` })
+            }
+        })
+        items.push({
+            label: this.tr('panel.bind-mouse', 'bind to mouse'),
+            fn: () => {
+                const scale = fmtNumber(Math.max(Math.abs(arg.value) * 2, 0.5))
+                this.apply({ from: arg.range[0], to: arg.range[1], text: `() => mouse.x / width * ${scale}` })
+            }
+        })
+        this.openPopover(d, root, anchor, (pop) => {
+            items.forEach((item) => {
+                const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : ''), item.label)
+                b.onclick = (e) => {
+                    e.stopPropagation()
+                    if (!item.keepOpen) this.closePopover()
+                    item.fn()
+                }
+                pop.appendChild(b)
+            })
+        })
+    }
+
+    // min/max editor for an existing MIDI mapping
+    openMidiRange(d, root, anchor, arg) {
+        const m = this.midi.mappings.params[arg.path]
+        if (!m) return
+        this.openPopover(d, root, anchor, (pop) => {
+            pop.classList.add('vj-rangeform')
+            const mkField = (labelText, value) => {
+                const label = el(d, 'label', null, labelText)
+                const input = el(d, 'input')
+                input.type = 'number'
+                input.step = 'any'
+                input.value = fmtNumber(value)
+                label.appendChild(input)
+                pop.appendChild(label)
+                return input
+            }
+            const minIn = mkField(this.tr('panel.midi-range-min', 'min'), m.min)
+            const maxIn = mkField(this.tr('panel.midi-range-max', 'max'), m.max)
+            const ok = el(d, 'button', 'vj-menu-item', this.tr('panel.midi-range-set', 'set range'))
+            const commit = () => {
+                this.midi.setRange(arg.path, parseFloat(minIn.value), parseFloat(maxIn.value))
+                this.closePopover()
+            }
+            ok.onclick = commit
+            ;[minIn, maxIn].forEach((input) => {
+                input.onkeydown = (e) => {
+                    e.stopPropagation()
+                    if (e.key === 'Enter') commit()
+                    if (e.key === 'Escape') this.closePopover()
+                }
+            })
+            pop.appendChild(ok)
+            setTimeout(() => minIn.focus(), 0)
+        })
+    }
+
+    // vertical relative drag for sequencer cells
+    attachVDrag(target, opts) {
+        target.style.touchAction = 'none'
+        target.onpointerdown = (e) => {
+            if (e.button !== 0) return
+            const startY = e.clientY
+            const v0 = opts.get()
+            let current = v0
+            let moved = false
+            target.setPointerCapture(e.pointerId)
+            target.classList.add('vj-armed')
+            target.onpointermove = (ev) => {
+                moved = true
+                let nv = v0 + (startY - ev.clientY) / 100 * opts.ref * (ev.shiftKey ? 0.1 : 1)
+                nv = parseFloat(nv.toFixed(4))
+                current = nv
+                opts.live(nv)
+            }
+            const up = (ev) => {
+                target.onpointermove = null
+                target.onpointerup = null
+                target.onpointercancel = null
+                target.classList.remove('vj-armed')
+                try { target.releasePointerCapture(ev.pointerId) } catch (err) {}
+                if (moved) opts.commit(current)
+            }
+            target.onpointerup = up
+            target.onpointercancel = up
+            e.preventDefault()
+        }
+    }
+
+    // [1, 2, 3].fast(x).smooth(y) -> step sequencer with rate + smooth controls
+    renderArraySeq(d, arg) {
+        const wrap = el(d, 'div', 'vj-seq')
+        const cells = el(d, 'div', 'vj-seq-cells')
+        arg.values.forEach((v, vi) => {
+            const cell = el(d, 'button', 'vj-seq-cell')
+            const val = el(d, 'span', 'vj-seq-val', fmtShort(v.value))
+            cell.appendChild(val)
+            cell.title = this.tr('panel.seq-cell', 'drag up/down to change — right-click removes the step')
+            this.attachVDrag(cell, {
+                get: () => v.value,
+                ref: Math.max(Math.abs(v.value), 0.5),
+                live: (nv) => { val.textContent = fmtShort(nv) },
+                commit: (nv) => this.apply(edits.setNumber(v, nv), { replaceURL: true })
+            })
+            cell.oncontextmenu = (e) => {
+                e.preventDefault()
+                if (arg.values.length <= 1) return
+                const edit = vi > 0
+                    ? { from: arg.values[vi - 1].range[1], to: v.range[1], text: '' }
+                    : { from: v.range[0], to: arg.values[1].range[0], text: '' }
+                this.apply(edit)
+            }
+            cells.appendChild(cell)
+        })
+        const add = el(d, 'button', 'vj-seq-add', '+')
+        add.title = this.tr('panel.seq-add', 'add a step')
+        add.onclick = () => {
+            const last = arg.values[arg.values.length - 1]
+            this.apply({ from: arg.arrayInnerEnd, to: arg.arrayInnerEnd, text: `, ${fmtNumber(last.value)}` })
+        }
+        cells.appendChild(add)
+        wrap.appendChild(cells)
+
+        const mods = el(d, 'div', 'vj-seq-mods')
+        // numeric modifier: label + fader when present, '+ name' button when not;
+        // right-click on the fader removes the modifier again
+        const numericMod = (name, addText, ref) => {
+            const mod = arg.mods[name]
+            if (mod && mod.arg) {
+                const label = el(d, 'span', 'vj-seq-modlabel', name)
+                mods.appendChild(label)
+                const mval = el(d, 'span', 'vj-value', fmtShort(mod.arg.value))
+                let cur = mod.arg.value
+                const track = this.makeFader(d, {
+                    get: () => cur,
+                    ref,
+                    live: (nv) => { cur = nv; mval.textContent = fmtShort(nv) },
+                    commit: (nv) => this.apply(edits.setNumber(mod.arg, nv), { replaceURL: true })
+                })
+                track.title = this.tr('panel.seq-mod-remove', 'right-click removes this modifier')
+                track.oncontextmenu = (e) => {
+                    e.preventDefault()
+                    this.apply({ from: mod.span[0], to: mod.span[1], text: '' })
+                }
+                mods.appendChild(track)
+                mods.appendChild(mval)
+            } else if (!mod) {
+                const addBtn = el(d, 'button', 'vj-seq-mod', '+ ' + name)
+                addBtn.onclick = () => this.apply({ from: arg.range[1], to: arg.range[1], text: addText })
+                mods.appendChild(addBtn)
+            }
+        }
+        numericMod('fast', '.fast(2)', 1)
+        numericMod('offset', '.offset(0.5)', 0.5)
+
+        const smoothBtn = el(d, 'button', 'vj-seq-mod' + (arg.mods.smooth ? ' vj-on' : ''), 'smooth')
+        smoothBtn.onclick = () => {
+            if (arg.mods.smooth) this.apply({ from: arg.mods.smooth.span[0], to: arg.mods.smooth.span[1], text: '' })
+            else this.apply({ from: arg.range[1], to: arg.range[1], text: '.smooth(1)' })
+        }
+        mods.appendChild(smoothBtn)
+
+        const easeSel = el(d, 'select', 'vj-refselect vj-seq-ease')
+        easeSel.title = this.tr('panel.seq-ease', 'easing between steps (implies smoothing)')
+        const none = el(d, 'option', null, 'ease —')
+        none.value = ''
+        if (!arg.mods.ease) none.selected = true
+        easeSel.appendChild(none)
+        EASINGS.forEach((name) => {
+            const o = el(d, 'option', null, name)
+            o.value = name
+            if (arg.mods.ease && arg.mods.ease.str && arg.mods.ease.str.value === name) o.selected = true
+            easeSel.appendChild(o)
+        })
+        easeSel.onchange = () => {
+            const v = easeSel.value
+            const mod = arg.mods.ease
+            if (!v) {
+                if (mod) this.apply({ from: mod.span[0], to: mod.span[1], text: '' })
+            } else if (mod) {
+                if (mod.str) this.apply({ from: mod.str.range[0], to: mod.str.range[1], text: `'${v}'` })
+                else this.apply({ from: mod.span[0], to: mod.span[1], text: `.ease('${v}')` })
+            } else {
+                this.apply({ from: arg.range[1], to: arg.range[1], text: `.ease('${v}')` })
+            }
+        }
+        mods.appendChild(easeSel)
+        wrap.appendChild(mods)
+        return wrap
+    }
+
+    // shared frame for audio/mouse bindings: a boxed group so everything the
+    // binding owns reads as one unit — a source row (picker + unbind) on top,
+    // then labeled SCALE and OFFSET fader rows. the source is normalized 0..1,
+    // so param = source * scale + offset: scale sets the range, offset the base.
+    buildBindBox(d, input, arg, spec) {
+        const wrap = el(d, 'div', spec.cls)
+        const state = spec.state
+        // widget edits always rewrite the whole expression (simple + robust)
+        const rewrite = () => {
+            let text = spec.base(state)
+            if (state.scale !== 1) text += ` * ${fmtNumber(state.scale)}`
+            if (state.offset !== 0) text += state.offset < 0 ? ` + (${fmtNumber(state.offset)})` : ` + ${fmtNumber(state.offset)}`
+            this.apply({ from: arg.range[0], to: arg.range[1], text }, { replaceURL: true })
+        }
+
+        const head = el(d, 'div', 'vj-bind-row vj-bind-head')
+        head.appendChild(el(d, 'span', spec.iconCls, spec.icon))
+        head.appendChild(spec.buildSelect(rewrite))
+        head.appendChild(el(d, 'div', 'vj-spacer'))
+        const unbind = el(d, 'button', 'vj-audio-unbind')
+        unbind.appendChild(el(d, 'i', 'fas fa-times'))
+        unbind.title = spec.unbindTitle
+        unbind.onclick = () => {
+            const fallback = typeof input.default === 'number' && isFinite(input.default) ? input.default : 0.5
+            this.apply({ from: arg.range[0], to: arg.range[1], text: fmtNumber(fallback) })
+        }
+        head.appendChild(unbind)
+        wrap.appendChild(head)
+
+        const subRow = (key, label, hint, fmt, ref) => {
+            const row = el(d, 'div', 'vj-bind-row')
+            row.appendChild(el(d, 'label', 'vj-label vj-bind-label', label))
+            const val = el(d, 'span', 'vj-value', fmt(state[key]))
+            const track = this.makeFader(d, {
+                get: () => state[key],
+                ref,
+                live: (v) => { state[key] = v; val.textContent = fmt(v) },
+                commit: () => rewrite()
+            })
+            track.title = hint
+            this.attachValueEdit(d, val, {
+                get: () => state[key],
+                set: (v) => { state[key] = v; val.textContent = fmt(v); rewrite() }
+            })
+            row.appendChild(track)
+            row.appendChild(val)
+            return row
+        }
+        wrap.appendChild(subRow('scale', this.tr('panel.audio-scale', 'scale'),
+            this.tr('panel.bind-scale-hint', 'range: the 0..1 input is multiplied by this'),
+            (v) => '×' + fmtShort(v), 1))
+        wrap.appendChild(subRow('offset', this.tr('panel.audio-offset', 'offset'),
+            this.tr('panel.bind-offset-hint', 'base value, added after scaling'),
+            (v) => (v < 0 ? '' : '+') + fmtShort(v), 0.5))
+        return wrap
+    }
+
+    // () => a.fft[n] * scale + offset -> boxed bin picker + scale/offset rows
+    renderAudioBind(d, input, arg) {
+        const state = {
+            bin: arg.bin,
+            scale: arg.scale ? arg.scale.value : 1,
+            offset: arg.offset ? arg.offset.value : 0
+        }
+        return this.buildBindBox(d, input, arg, {
+            cls: 'vj-audio vj-bind',
+            icon: '∿',
+            iconCls: 'vj-audio-icon',
+            state,
+            base: (s) => `() => a.fft[${s.bin}]`,
+            unbindTitle: this.tr('panel.unbind-audio', 'remove the audio binding'),
+            buildSelect: (rewrite) => {
+                const sel = el(d, 'select', 'vj-refselect')
+                for (let i = 0; i < 4; i++) {
+                    const o = el(d, 'option', null, 'fft ' + i)
+                    o.value = String(i)
+                    if (i === arg.bin) o.selected = true
+                    sel.appendChild(o)
+                }
+                sel.title = this.tr('panel.bind-audio-src', 'audio input: loudness of this fft band, 0..1')
+                sel.onchange = () => { state.bin = parseInt(sel.value, 10); rewrite() }
+                return sel
+            }
+        })
+    }
+
+    // () => mouse.x / width * scale + offset -> boxed axis picker + scale/offset rows
+    renderMouseBind(d, input, arg) {
+        const state = {
+            axis: arg.axis,
+            norm: arg.norm,
+            scale: arg.scale ? arg.scale.value : 1,
+            offset: arg.offset ? arg.offset.value : 0
+        }
+        return this.buildBindBox(d, input, arg, {
+            cls: 'vj-audio vj-mouse vj-bind',
+            icon: '☩',
+            iconCls: 'vj-audio-icon vj-mouse-icon',
+            state,
+            base: (s) => `() => mouse.${s.axis}` +
+                (s.norm ? ` / ${s.axis === 'x' ? 'width' : 'height'}` : ''),
+            unbindTitle: this.tr('panel.unbind-mouse', 'remove the mouse binding'),
+            buildSelect: (rewrite) => {
+                const sel = el(d, 'select', 'vj-refselect')
+                ;['x', 'y'].forEach((axis) => {
+                    const o = el(d, 'option', null, 'mouse ' + axis)
+                    o.value = axis
+                    if (axis === arg.axis) o.selected = true
+                    sel.appendChild(o)
+                })
+                sel.title = this.tr('panel.bind-mouse-src', 'mouse input: position across the screen, 0..1')
+                sel.onchange = () => { state.axis = sel.value; rewrite() }
+                return sel
+            }
+        })
+    }
+
+    renderOutChip(d, stmt) {
+        const chip = el(d, 'div', 'vj-chip vj-out-chip')
+        chip.appendChild(el(d, 'div', 'vj-chip-head')).appendChild(el(d, 'span', 'vj-chip-name', 'out'))
+        const body = el(d, 'div', 'vj-chip-params')
+        if (stmt.out) {
+            const sel = el(d, 'select', 'vj-refselect')
+            ;['o0', 'o1', 'o2', 'o3'].forEach((name) => {
+                const o = el(d, 'option', null, name)
+                o.value = name
+                if (name === stmt.out.target) o.selected = true
+                sel.appendChild(o)
+            })
+            sel.onchange = () => {
+                if (stmt.out.explicit) this.apply(edits.setOutTarget(stmt.out, sel.value))
+                else this.apply(edits.setOutTarget(stmt.out, sel.value)) // inserts at empty arg position
+            }
+            body.appendChild(sel)
+        } else {
+            const btn = el(d, 'button', 'vj-addout', '+ out')
+            btn.onclick = () => {
+                const last = stmt.transforms.length ? stmt.transforms[stmt.transforms.length - 1] : stmt.source
+                this.apply(edits.appendOut(last, 'o0'))
+            }
+            body.appendChild(btn)
+        }
+        chip.appendChild(body)
+        return chip
+    }
+
+    renderRenderRow(d, stmt) {
+        const rowEl = el(d, 'div', 'vj-setup-row')
+        rowEl.appendChild(el(d, 'label', 'vj-label', 'render'))
+        const sel = el(d, 'select', 'vj-refselect')
+        const quad = el(d, 'option', null, 'quad')
+        quad.value = ''
+        if (!stmt.target) quad.selected = true
+        sel.appendChild(quad)
+        ;['o0', 'o1', 'o2', 'o3'].forEach((name) => {
+            const o = el(d, 'option', null, name)
+            o.value = name
+            if (name === stmt.target) o.selected = true
+            sel.appendChild(o)
+        })
+        sel.onchange = () => this.apply({ from: stmt.argRange[0], to: stmt.argRange[1], text: sel.value })
+        rowEl.appendChild(sel)
+        return rowEl
+    }
+
+    // shown when the sketch has no speed line yet: the fader drives the live
+    // global, and the first commit writes `speed = N` into the sketch (which
+    // then renders as the regular setup row in the same spot)
+    renderGhostSpeedRow(d) {
+        const rowEl = el(d, 'div', 'vj-setup-row vj-ghostrow')
+        rowEl.appendChild(el(d, 'label', 'vj-label', 'speed'))
+        let current = typeof window.speed === 'number' ? window.speed : 1
+        const valueEl = el(d, 'span', 'vj-value vj-ghost', fmtShort(current))
+        const track = this.makeFader(d, {
+            get: () => current,
+            ref: 1,
+            live: (v) => {
+                current = v
+                valueEl.textContent = fmtShort(v)
+                window.speed = v
+            },
+            commit: (v) => {
+                window.speed = parseFloat(fmtNumber(v))
+                this.applyQuiet({ from: 0, to: 0, text: `speed = ${fmtNumber(v)}\n` })
+            }
+        })
+        this.attachValueEdit(d, valueEl, {
+            get: () => current,
+            set: (v) => {
+                current = v
+                window.speed = parseFloat(fmtNumber(v))
+                this.applyQuiet({ from: 0, to: 0, text: `speed = ${fmtNumber(v)}\n` })
+            }
+        })
+        rowEl.appendChild(track)
+        rowEl.appendChild(valueEl)
+        return rowEl
+    }
+
+    renderGlobalRow(d, stmt) {
+        const rowEl = el(d, 'div', 'vj-setup-row')
+        rowEl.appendChild(el(d, 'label', 'vj-label', stmt.sub))
+        const valueEl = el(d, 'span', 'vj-value', fmtShort(stmt.arg.value))
+        let current = stmt.arg.value
+        const track = this.makeFader(d, {
+            get: () => current,
+            ref: stmt.sub === 'bpm' ? 30 : 1, // unity/default tempo sits mid-track
+            live: (v) => {
+                current = v
+                valueEl.textContent = fmtShort(v)
+                window[stmt.sub] = v // speed/bpm are live globals — instant preview
+            },
+            commit: (v) => {
+                // the global already carries the value — write the text without
+                // re-evaluating (keeps initCam sketches from re-prompting)
+                window[stmt.sub] = parseFloat(fmtNumber(v))
+                this.applyQuiet(edits.setNumber(stmt.arg, v))
+            }
+        })
+        this.attachValueEdit(d, valueEl, {
+            get: () => current,
+            set: (v) => {
+                current = v
+                valueEl.textContent = fmtShort(v)
+                window[stmt.sub] = parseFloat(fmtNumber(v))
+                this.applyQuiet(edits.setNumber(stmt.arg, v))
+            }
+        })
+        rowEl.appendChild(track)
+        rowEl.appendChild(valueEl)
+        return rowEl
+    }
+
+    renderRawRow(d, stmt) {
+        const rowEl = el(d, 'button', 'vj-raw-row')
+        const label = stmt.kind === 'setup' ? 'setup' : 'code'
+        rowEl.appendChild(el(d, 'span', 'vj-label', label))
+        const text = (stmt.text || '').replace(/\s+/g, ' ')
+        rowEl.appendChild(el(d, 'span', 'vj-raw-text', text.length > 60 ? text.slice(0, 59) + '…' : text))
+        rowEl.title = this.tr('panel.raw-hint', 'not chain-editable — click to edit in the code')
+        rowEl.onclick = () => this.jumpToRange(stmt.range)
+        return rowEl
+    }
+
+    jumpToRange(range) {
+        const cm = this.cm
+        if (!cm) return
+        const from = cm.posFromIndex(range[0])
+        const to = cm.posFromIndex(range[1])
+        cm.setSelection(from, to)
+        cm.focus()
+        const editor = this.state.editor && this.state.editor.editor
+        if (editor && editor.flashCode) editor.flashCode(from, to)
+    }
+
+    // ------------------------------------------------------- palette + menus
+
+    patchPoint(d, root, chainLike, gapIdx) {
+        const pp = el(d, 'button', 'vj-pp')
+        pp.dataset.gap = gapIdx
+        pp.appendChild(el(d, 'span', 'vj-pp-dot'))
+        pp.title = this.tr('panel.insert', 'insert a function here')
+        pp.onclick = () => {
+            const afterStep = gapIdx === 0 ? chainLike.source : chainLike.transforms[gapIdx - 1]
+            this.openPalette(d, root, pp, ['coord', 'color', 'combine', 'combineCoord'], (def) => {
+                this.apply(edits.insertTransform(afterStep, def))
+            })
+        }
+        return pp
+    }
+
+    openChipMenu(d, root, anchor, step, chainLike, index, opts) {
+        const isSource = index === -1
+        const items = []
+        items.push({
+            label: this.tr('panel.replace', 'replace'),
+            fn: () => {
+                const cat = step.meta ? [step.meta.type] : ['src', 'coord', 'color', 'combine', 'combineCoord']
+                this.openPalette(d, root, anchor, cat, (def) => {
+                    this.apply(edits.replaceStep(step, def, this.model.text))
+                })
+            },
+            keepOpen: true
+        })
+        if (!isSource) {
+            // a step whose args contain '*/' cannot be wrapped in a comment
+            const slice = this.model.text.slice(step.span[0], step.span[1])
+            if (!slice.includes('*/')) {
+                items.push({
+                    label: this.tr('panel.bypass', 'bypass'),
+                    fn: () => this.apply(edits.bypassTransform(step, this.model.text))
+                })
+            }
+            items.push({
+                label: this.tr('panel.duplicate', 'duplicate'),
+                fn: () => this.apply(edits.duplicateTransform(step, this.model.text))
+            })
+            items.push({
+                label: this.tr('panel.remove', 'remove'),
+                fn: () => this.apply(edits.removeTransform(step)),
+                danger: true
+            })
+        } else if (opts.topLevel && opts.stmt) {
+            items.push({
+                label: this.tr('panel.remove-chain', 'remove chain'),
+                fn: () => this.apply(edits.removeStatement(opts.stmt, this.model.text)),
+                danger: true
+            })
+        }
+        this.openPopover(d, root, anchor, (pop) => {
+            items.forEach((item) => {
+                const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : ''), item.label)
+                b.onclick = (e) => {
+                    e.stopPropagation()
+                    if (!item.keepOpen) this.closePopover()
+                    item.fn()
+                }
+                pop.appendChild(b)
+            })
+        })
+    }
+
+    openPalette(d, root, anchor, types, onPick) {
+        const groups = grouped(this.transforms).filter((g) => types.includes(g.type))
+        this.openPopover(d, root, anchor, (pop) => {
+            pop.classList.add('vj-palette')
+            const search = el(d, 'input', 'vj-palette-search')
+            search.placeholder = this.tr('panel.search', 'search…')
+            pop.appendChild(search)
+            const list = el(d, 'div', 'vj-palette-list')
+            const buttons = []
+            groups.forEach((g) => {
+                if (!g.fns.length) return
+                const cat = el(d, 'div', 'vj-palette-cat type-' + g.type)
+                cat.appendChild(el(d, 'div', 'vj-palette-cat-label', g.label))
+                g.fns.forEach((def) => {
+                    const b = el(d, 'button', 'vj-palette-fn', def.name)
+                    b.onclick = (e) => {
+                        e.stopPropagation()
+                        this.closePopover()
+                        onPick(def)
+                    }
+                    buttons.push({ el: b, name: def.name, cat })
+                    cat.appendChild(b)
+                })
+                list.appendChild(cat)
+            })
+            pop.appendChild(list)
+            search.oninput = () => {
+                const q = search.value.toLowerCase()
+                buttons.forEach((b) => { b.el.style.display = b.name.toLowerCase().includes(q) ? '' : 'none' })
+                list.querySelectorAll('.vj-palette-cat').forEach((c) => {
+                    const any = Array.from(c.querySelectorAll('.vj-palette-fn')).some((b) => b.style.display !== 'none')
+                    c.style.display = any ? '' : 'none'
+                })
+            }
+            search.onkeydown = (e) => {
+                e.stopPropagation()
+                if (e.key === 'Escape') this.closePopover()
+                if (e.key === 'Enter') {
+                    const first = buttons.find((b) => b.el.style.display !== 'none')
+                    if (first) first.el.click()
+                }
+            }
+            setTimeout(() => search.focus(), 0)
+        })
+    }
+
+    openPopover(d, root, anchor, fill) {
+        this.closePopover()
+        const pop = el(d, 'div', 'vj-popover')
+        fill(pop)
+        root.appendChild(pop)
+        const a = anchor.getBoundingClientRect()
+        const r = root.getBoundingClientRect()
+        pop.style.left = Math.max(6, Math.min(a.left - r.left, r.width - pop.offsetWidth - 6)) + 'px'
+        let top = a.bottom - r.top + 4
+        if (top + pop.offsetHeight > r.height - 6) top = Math.max(6, a.top - r.top - pop.offsetHeight - 4)
+        pop.style.top = top + 'px'
+        this._popover = pop
+        this._popoverCloser = (e) => {
+            if (!pop.contains(e.target) && e.target !== anchor) this.closePopover()
+        }
+        d.addEventListener('pointerdown', this._popoverCloser, true)
+        this._popoverDoc = d
+    }
+
+    closePopover() {
+        if (this._popover) {
+            this._popover.remove()
+            this._popoverDoc.removeEventListener('pointerdown', this._popoverCloser, true)
+            this._popover = null
+        }
+    }
+
+    // -------------------------------------------------------- chip reorder
+
+    attachChipDrag(d, root, handle, chip, chainLike, index) {
+        handle.onpointerdown = (e) => {
+            if (e.button !== 0 || e.target.closest('.vj-chip-menubtn')) return
+            const startX = e.clientX
+            const startY = e.clientY
+            let ghost = null
+            let pps = []
+            let targetGap = -1
+            handle.setPointerCapture(e.pointerId)
+
+            const onMove = (ev) => {
+                if (!ghost) {
+                    if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 7) return
+                    ghost = chip.cloneNode(true)
+                    ghost.className = chip.className + ' vj-drag-ghost'
+                    ghost.style.width = chip.offsetWidth + 'px'
+                    d.body.appendChild(ghost)
+                    chip.classList.add('vj-lifting')
+                    pps = Array.from(chip.parentNode.querySelectorAll(':scope > .vj-pp'))
+                    chip.parentNode.classList.add('vj-dragging')
+                }
+                ghost.style.left = ev.clientX + 8 + 'px'
+                ghost.style.top = ev.clientY + 8 + 'px'
+                let best = -1
+                let bestDist = Infinity
+                pps.forEach((pp, g) => {
+                    const rect = pp.getBoundingClientRect()
+                    const dist = Math.abs(ev.clientX - (rect.left + rect.width / 2))
+                    if (dist < bestDist) { bestDist = dist; best = g }
+                })
+                pps.forEach((pp, g) => pp.classList.toggle('vj-pp-target', g === best))
+                targetGap = best
+            }
+            const onUp = () => {
+                handle.onpointermove = null
+                handle.onpointerup = null
+                handle.onpointercancel = null
+                if (ghost) {
+                    ghost.remove()
+                    chip.classList.remove('vj-lifting')
+                    chip.parentNode.classList.remove('vj-dragging')
+                    pps.forEach((pp) => pp.classList.remove('vj-pp-target'))
+                    if (targetGap >= 0) {
+                        const toIdx = targetGap > index ? targetGap - 1 : targetGap
+                        if (toIdx !== index) {
+                            this.apply(edits.moveTransform(chainLike, index, toIdx, this.model.text))
+                        }
+                    }
+                }
+            }
+            handle.onpointermove = onMove
+            handle.onpointerup = onUp
+            handle.onpointercancel = onUp
+        }
+    }
+}

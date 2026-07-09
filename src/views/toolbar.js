@@ -22,6 +22,7 @@ export default function toolbar(state, emit) {
         ${toggleExtensions}
         ${icon("shuffle", `fa-random`, t('toolbar.shuffle'), 'gallery:showExample')}
         ${icon("mutator", `fa-dice ${hidden}`, t('toolbar.random'), 'editor: randomize')}
+        ${icon("panel", `fa-sliders-h ${hidden}`, t('toolbar.panel'), 'panel: toggle')}
         ${state.serverURL === null ? '' : icon("share", `fa-upload ${hidden}`, t('toolbar.upload'), 'gallery:shareSketch')}
         ${toggleInfo}
     </div>`
