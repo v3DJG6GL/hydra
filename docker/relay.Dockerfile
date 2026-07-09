@@ -6,7 +6,10 @@ RUN npm install --omit=dev && npm cache clean --force
 COPY server/ .
 ENV VJ_PORT=8081 \
     VJ_DATA_DIR=/data
-RUN mkdir -p /data && chown node:node /data
+# 1777 so the container runs under ANY uid:gid (compose `user:` overrides,
+# e.g. 568:568) and scene-bank persistence still works — the mode is copied
+# into fresh named volumes on first use
+RUN mkdir -p /data && chmod 1777 /data
 USER node
 EXPOSE 8081
 VOLUME /data

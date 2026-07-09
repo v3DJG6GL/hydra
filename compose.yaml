@@ -3,26 +3,34 @@
 #
 # The images are public on GHCR once the package visibility is set;
 # otherwise `docker login ghcr.io` first with a token that has read:packages.
+#
+# Both images run under any arbitrary uid:gid (compose `user:` overrides).
 
 services:
   hydra:
     image: ghcr.io/v3djg6gl/hydra:latest
     container_name: hydra
     restart: unless-stopped
-    # Runs as uid 101 (nginx) by default; the unprivileged base image also
-    # accepts any arbitrary uid:gid, e.g. to match a host user:
     # user: "568:568"
     ports:
       # host:container — serve on http://<server>:8080
       - "8080:8080"
+    # nginx proxies /ws to the relay; override when your relay service or
+    # network alias is named differently (defaults shown):
+    # environment:
+    #   VJ_RELAY_HOST: relay
+    #   VJ_RELAY_PORT: "8081"
 
   # WebSocket relay for the remote VJ deck (tablet/laptop controlling this
   # instance). nginx inside `hydra` proxies /ws here — no extra published
   # port, and any TLS proxy in front only ever talks to :8080.
+  # If you rename this service, either give it a network alias `relay` or
+  # set VJ_RELAY_HOST on the hydra service to match.
   relay:
     image: ghcr.io/v3djg6gl/hydra-relay:latest
     container_name: hydra-relay
     restart: unless-stopped
+    # user: "568:568"
     volumes:
       # per-room scene banks survive restarts (and kiosk browsers that wipe
       # localStorage)

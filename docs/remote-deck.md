@@ -23,6 +23,22 @@ The design behind all of this is in [remote-deck-plan.md](remote-deck-plan.md).
   development `npm run dev` serves the relay itself; in production it's the
   `relay` service in `compose.yaml`, proxied by nginx at `/ws`.
 
+### Customizing the deployment
+
+- **Arbitrary uid:gid**: both images run under any compose `user:` override
+  (e.g. `user: "568:568"`). The relay's `/data` and nginx's rendered config
+  dir are world-writable inside their single-purpose containers to make that
+  work. Note for relay volumes created by an image from before this change:
+  fix the mode once with
+  `docker run --rm -v <volume>:/data alpine chmod 1777 /data`.
+- **Relay service name**: nginx inside the `hydra` image dials
+  `http://relay:8081` by default. If your relay service is named differently
+  (or lives at another port), set `VJ_RELAY_HOST` / `VJ_RELAY_PORT` on the
+  `hydra` service — or give the relay a network alias `relay`.
+- The relay itself takes `VJ_PORT` (default 8081), `VJ_DATA_DIR` (default
+  `/data`) and `VJ_ALLOWED_ORIGINS` (comma-separated allowlist; default is
+  same-host origin checking).
+
 ## Pairing
 
 1. On the machine that runs the visuals, click the **QR button** in the VJ
