@@ -8,7 +8,7 @@ export default ({ content, header }, state, emit) => {
   return html`
 <div id="info-container" class="${state.showInfo ? "" : "hidden"}" style="direction:${textDirection}">
   <div id="modal">
-    <div id="modal-header" style="opacity:${state.showUI === true ? 1 : 0}">
+    <div id="modal-header" style="opacity:${state.showUI === true && state.showCode !== false ? 1 : 0}">
      ${header}
       ${toolbar(state, emit)}
     </div>

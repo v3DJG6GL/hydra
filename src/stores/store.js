@@ -4,6 +4,7 @@ import repl from './repl-v2.js'
 export default function store(state, emitter) {
   state.showInfo = false
   state.showUI = true
+  state.showCode = true
   state.showExtensions = false
   state.errorMessage = ''
   state.isError = false
@@ -66,6 +67,12 @@ export default function store(state, emitter) {
 
   emitter.on('ui: hide all', function () {
     state.showUI = !state.showUI
+    emitter.emit('render')
+  })
+
+  // hides the editor overlay (code, console, header) but keeps the vj deck
+  emitter.on('ui: toggle code', function () {
+    state.showCode = !state.showCode
     emitter.emit('render')
   })
 
