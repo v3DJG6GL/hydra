@@ -25,7 +25,7 @@
 // joining requires the unguessable room id AND its token (bound at room
 // creation, compared constant-time). Handshakes are rate-limited per IP,
 // sockets that don't hello in time are dropped, and the Origin header must
-// match the request Host unless VJ_ALLOWED_ORIGINS says otherwise.
+// match the request Host unless HYDRA_RELAY_ALLOWED_ORIGINS says otherwise.
 import { WebSocketServer } from 'ws'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -47,8 +47,8 @@ const timingSafeEq = (a, b) => {
 
 export function attachRelay(httpServer, opts = {}) {
     const wsPath = opts.path || '/ws'
-    const dataDir = opts.dataDir || process.env.VJ_DATA_DIR || './vj-data'
-    const allowedOrigins = (opts.allowedOrigins || process.env.VJ_ALLOWED_ORIGINS || '')
+    const dataDir = opts.dataDir || process.env.HYDRA_RELAY_DATA_DIR || './vj-data'
+    const allowedOrigins = (opts.allowedOrigins || process.env.HYDRA_RELAY_ALLOWED_ORIGINS || '')
         .split(',').map((s) => s.trim()).filter(Boolean)
     const log = opts.quiet ? () => {} : (...a) => console.log('[vj-relay]', ...a)
 

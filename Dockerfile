@@ -12,10 +12,10 @@ RUN npm run build
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 # The server config is an envsubst template (rendered by the stock nginx
 # entrypoint on start) so the relay upstream is overridable per deployment:
-#   VJ_RELAY_HOST (default: relay)   VJ_RELAY_PORT (default: 8081)
+#   HYDRA_RELAY_HOST (default: relay)   HYDRA_RELAY_PORT (default: 8081)
 COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
-ENV VJ_RELAY_HOST=relay \
-    VJ_RELAY_PORT=8081
+ENV HYDRA_RELAY_HOST=relay \
+    HYDRA_RELAY_PORT=8081
 # the rendered config lands in conf.d at startup — keep that writable for ANY
 # runtime uid:gid (compose `user:` overrides, e.g. 568:568), same spirit as
 # the base image's arbitrary-uid support

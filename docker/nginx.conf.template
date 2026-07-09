@@ -16,14 +16,14 @@ server {
 
     # remote VJ deck relay — the WebSocket upgrade must pass through here AND
     # through any TLS proxy in front of this container. The upstream is
-    # env-configurable (VJ_RELAY_HOST / VJ_RELAY_PORT, defaults relay:8081):
+    # env-configurable (HYDRA_RELAY_HOST / HYDRA_RELAY_PORT, defaults relay:8081):
     # this file is an nginx envsubst template rendered at container start.
     # Resolved at request time (variable + docker DNS) so nginx still boots
     # when the relay service is not deployed.
     location /ws {
         resolver 127.0.0.11 valid=30s ipv6=off;
-        set $vj_relay ${VJ_RELAY_HOST};
-        proxy_pass http://$vj_relay:${VJ_RELAY_PORT};
+        set $vj_relay ${HYDRA_RELAY_HOST};
+        proxy_pass http://$vj_relay:${HYDRA_RELAY_PORT};
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

@@ -4,8 +4,8 @@ WORKDIR /app
 COPY server/package.json ./
 RUN npm install --omit=dev && npm cache clean --force
 COPY server/ .
-ENV VJ_PORT=8081 \
-    VJ_DATA_DIR=/data
+ENV HYDRA_RELAY_PORT=8081 \
+    HYDRA_RELAY_DATA_DIR=/data
 # 1777 so the container runs under ANY uid:gid (compose `user:` overrides,
 # e.g. 568:568) and scene-bank persistence still works — the mode is copied
 # into fresh named volumes on first use

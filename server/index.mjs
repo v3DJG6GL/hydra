@@ -4,7 +4,7 @@
 import http from 'node:http'
 import { attachRelay } from './relay.mjs'
 
-const port = parseInt(process.env.VJ_PORT || '8081', 10)
+const port = parseInt(process.env.HYDRA_RELAY_PORT || '8081', 10)
 
 const server = http.createServer((req, res) => {
     if (req.url === '/healthz') {
@@ -19,7 +19,7 @@ const server = http.createServer((req, res) => {
 const relay = attachRelay(server)
 
 server.listen(port, () => {
-    console.log(`[vj-relay] listening on :${port} (ws path /ws, data ${process.env.VJ_DATA_DIR || './vj-data'})`)
+    console.log(`[vj-relay] listening on :${port} (ws path /ws, data ${process.env.HYDRA_RELAY_DATA_DIR || './vj-data'})`)
 })
 
 process.on('SIGTERM', () => { relay.close(); server.close(() => process.exit(0)) })
