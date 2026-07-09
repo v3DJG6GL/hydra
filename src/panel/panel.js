@@ -211,6 +211,9 @@ export default class VJPanel {
     // one persistent <video> per aux window so deck rebuilds re-adopt the
     // element instead of restarting the stream (avoids a black flash)
     previewFor(root) {
+        // remote decks can't touch the canvas — the adapter owns the element
+        // (WebRTC video or relayed JPEG frames)
+        if (root === this.remoteRoot) return this.host.previewElement(root.ownerDocument)
         const stream = this.host.captureStream()
         if (!stream) return null
         const win = this.winFor(root)
@@ -766,12 +769,13 @@ export default class VJPanel {
         rail.appendChild(codeBtn)
 
         // aux windows can't see the main tab's canvas — offer a live preview
-        if (isAux && this.host.captureStream()) {
+        if (isAux && this.host.canPreview()) {
             const prev = el(d, 'button', 'vj-fft' + (this.previewOn ? ' vj-on' : ''), '◉ LIVE')
             prev.title = this.tr('panel.preview', 'show the visuals live in this window (the stream pauses while the hydra tab is hidden)')
             prev.onclick = () => {
                 this.previewOn = !this.previewOn
                 try { localStorage.setItem('hydra-vj-preview', this.previewOn ? '1' : '0') } catch (e) { /* private mode */ }
+                if (this.host.setPreview) this.host.setPreview(this.previewOn)
                 this.renderAll()
             }
             rail.appendChild(prev)

@@ -27,20 +27,29 @@ export default class HydraCanvas extends Component {
 
 
     const hydraOptions = { detectAudio: true, canvas: element.querySelector("canvas"), precision: precisionValue }
-    
-    if (this.state.serverURL === null) {
-      console.log('LOCAL ONLY, WILL NOT INIT webRTC and gallery')
-      this.hydra = new Hydra(hydraOptions)
-    } else {
-      this.pb = new PatchBay()
-      hydraOptions.pb = this.pb
-      this.hydra = new Hydra(hydraOptions)
-      this.pb.init(this.hydra.captureStream, {
-        // server: window.location.origin,
-        server: this.state.serverURL,
-        room: 'iclc'
-      })
-      window.pb = this.pb
+
+    // a hydra boot failure (no WebGL context: GPU driver hiccup, context
+    // exhaustion) must not propagate — the load hooks of sibling components
+    // (editor!) run in the same observer callback and would never fire
+    try {
+      if (this.state.serverURL === null) {
+        console.log('LOCAL ONLY, WILL NOT INIT webRTC and gallery')
+        this.hydra = new Hydra(hydraOptions)
+      } else {
+        this.pb = new PatchBay()
+        hydraOptions.pb = this.pb
+        this.hydra = new Hydra(hydraOptions)
+        this.pb.init(this.hydra.captureStream, {
+          // server: window.location.origin,
+          server: this.state.serverURL,
+          room: 'iclc'
+        })
+        window.pb = this.pb
+      }
+    } catch (e) {
+      console.error('hydra failed to boot', e)
+      setTimeout(() => { if (window._reportError) window._reportError(e) }, 0)
+      return
     }
 
     window.hydraSynth = this.hydra

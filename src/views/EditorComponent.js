@@ -26,17 +26,22 @@ export default class Editor extends Component {
   }
 
   hide() {
+    if (!this.innerText) return
     this.innerText.style.opacity = 0
     this.logElement.style.opacity = 0
   }
 
   show() {
+    if (!this.innerText) return
     this.innerText.style.opacity = 1
     this.innerText.style.pointerEvents = 'all'
     this.logElement.style.opacity = 1
   }
 
   update (state) {
+    // a render can land between mount and the deferred load() (e.g. incoming
+    // translations or a remote deck waking the panel) — don't die on it
+    if (!this.logElement) return false
     if(state.showInfo === true && state.showExtensions === false || state.showUI === false || state.showCode === false) {
         this.hide()
     } else {

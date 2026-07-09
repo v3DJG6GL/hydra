@@ -181,6 +181,10 @@ export default class LocalHost {
         return (h && h.captureStream) || null
     }
 
+    canPreview() {
+        return !!this.captureStream()
+    }
+
     getGlobal(name) {
         return window[name]
     }

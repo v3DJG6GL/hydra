@@ -120,6 +120,8 @@ function boot({ room, token }) {
     panel.remoteRoot = rootEl
     panel.attachSceneKeys(document)
     window.vjPanel = panel // console access, in hydra tradition
+    // the ◉ LIVE preference persisted from an earlier session
+    if (panel.previewOn) host.setPreview(true)
 
     const setStatus = () => {
         const cls = 'vj-remote-status'

@@ -79,7 +79,8 @@ export default function remoteStore(state, emitter) {
             transforms: p ? p.host.getTransforms() : {},
             showCode: state.showCode !== false,
             globals: globals(),
-            lbClean: !!(p && p.lb.clean)
+            lbClean: !!(p && p.lb.clean),
+            canPreview: !!(p && p.host.captureStream())
         }
     }
 
@@ -230,8 +231,117 @@ export default function remoteStore(state, emitter) {
             case 'scenesReplace':
                 if (Array.isArray(msg.scenes)) p.host.sceneReplaceAll(msg.scenes)
                 return
+            case 'previewStart':
+                startRtc(from, p)
+                return
+            case 'previewStop':
+                stopRtc(from)
+                frameSubs.delete(from)
+                syncFrameTimer()
+                return
+            case 'rtc':
+                onRtcAnswer(from, msg)
+                return
+            case 'frames':
+                if (msg.on) frameSubs.add(from)
+                else frameSubs.delete(from)
+                syncFrameTimer()
+                return
             default:
-                emitter.emit('vj-remote: intent', from, msg) // preview signaling etc.
+                emitter.emit('vj-remote: intent', from, msg)
+        }
+    }
+
+    // ---- live preview: hydra's captureStream over WebRTC per deck, with
+    // relayed JPEG frames (getScreenImage, ~3fps) as the dependable fallback
+
+    const pcs = new Map() // deckId -> RTCPeerConnection
+    const frameSubs = new Set()
+    let frameTimer = null
+    let frameBusy = false
+
+    const stopRtc = (deckId) => {
+        const pc = pcs.get(deckId)
+        if (pc) {
+            try { pc.close() } catch (e) { /* already closed */ }
+            pcs.delete(deckId)
+        }
+    }
+
+    const startRtc = async (deckId, p) => {
+        stopRtc(deckId)
+        const stream = p && p.host.captureStream()
+        if (!stream || typeof RTCPeerConnection === 'undefined') return // deck times out into frames
+        let pc
+        try {
+            pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+        } catch (e) { return }
+        pcs.set(deckId, pc)
+        try {
+            stream.getTracks().forEach((t) => pc.addTrack(t, stream))
+            pc.onicecandidate = (e) => {
+                if (e.candidate) to(deckId, { t: 'rtc', kind: 'candidate', candidate: e.candidate })
+            }
+            const offer = await pc.createOffer()
+            await pc.setLocalDescription(offer)
+            to(deckId, { t: 'rtc', kind: 'offer', sdp: pc.localDescription.sdp })
+        } catch (e) {
+            stopRtc(deckId)
+        }
+    }
+
+    const onRtcAnswer = (deckId, msg) => {
+        const pc = pcs.get(deckId)
+        if (!pc) return
+        if (msg.kind === 'answer') pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp }).catch(() => {})
+        else if (msg.kind === 'candidate') pc.addIceCandidate(msg.candidate).catch(() => { /* stale */ })
+    }
+
+    const syncFrameTimer = () => {
+        if (frameSubs.size && !frameTimer) frameTimer = setInterval(captureFrame, 350)
+        else if (!frameSubs.size && frameTimer) {
+            clearInterval(frameTimer)
+            frameTimer = null
+        }
+    }
+
+    const captureFrame = () => {
+        if (frameBusy) return
+        const hydra = state.hydra && state.hydra.hydra
+        if (!hydra || typeof hydra.getScreenImage !== 'function') return
+        frameBusy = true
+        let settled = false
+        const done = () => { if (!settled) { settled = true; frameBusy = false } }
+        const guard = setTimeout(done, 2000) // rendering stalled — skip the frame
+        try {
+            hydra.getScreenImage((blob) => {
+                if (!blob) { clearTimeout(guard); return done() }
+                const url = URL.createObjectURL(blob)
+                const img = new Image()
+                img.onload = () => {
+                    try {
+                        const c = document.createElement('canvas')
+                        const w = 480
+                        c.width = w
+                        c.height = Math.max(1, Math.round(w * img.height / img.width))
+                        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
+                        const data = c.toDataURL('image/jpeg', 0.55)
+                        frameSubs.forEach((id) => to(id, { t: 'frame', data }))
+                    } catch (e) { /* canvas hiccup — drop the frame */ }
+                    URL.revokeObjectURL(url)
+                    clearTimeout(guard)
+                    done()
+                }
+                img.onerror = () => {
+                    URL.revokeObjectURL(url)
+                    clearTimeout(guard)
+                    done()
+                }
+                img.src = url
+            })
+        } catch (e) {
+            clearTimeout(guard)
+            done()
         }
     }
 
@@ -310,6 +420,9 @@ export default function remoteStore(state, emitter) {
                 state.vjRemote.decks = Math.max(0, state.vjRemote.decks - 1)
                 fftSubs.delete(msg.id)
                 syncFftTimer()
+                stopRtc(msg.id)
+                frameSubs.delete(msg.id)
+                syncFrameTimer()
                 commitDeckValues(msg.id)
                 emitter.emit('vj-remote: deck-left', msg.id)
             } else if (msg.t === 'error' && msg.code === 'replaced') {

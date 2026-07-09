@@ -44,8 +44,12 @@ export default class Gallery {
 
   
   setSketchFromURL(path = window.location.search, callback) {
-    hush()
-    render(o0)
+    // hydra may not have booted (yet, or at all) — a ReferenceError here
+    // would also kill every store listener registered after this one
+    try {
+      hush()
+      render(o0)
+    } catch (e) { /* no hydra globals yet */ }
 
     let searchParams = new URLSearchParams(path)
     this.searchParams = searchParams

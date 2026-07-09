@@ -170,7 +170,9 @@ export default class RemoteHost {
                 this.globals = { ...this.globals, ...(msg.globals || {}) }
                 this.showCode = msg.showCode !== false
                 this.lb.clean = !!msg.lbClean && this.lb.clean
+                this._canPreview = !!msg.canPreview
                 this.snapshotReceived = true
+                if (this._previewOn) this._kickPreview() // resumed after a reconnect
                 this._fire('code-changed', 'snapshot')
                 this._fire('scenes-changed')
                 this._fire('ui-changed')
@@ -204,6 +206,15 @@ export default class RemoteHost {
                 // a host-side eval replaced the running program — quiet
                 // commits must go back to full evals until re-ensured
                 if (!msg.clean) this.lb.invalidate()
+                return
+            case 'rtc':
+                this._onRtc(msg)
+                return
+            case 'frame':
+                if (this._previewImg) {
+                    this._previewImg.src = msg.data
+                    this._setPreviewMode('frames')
+                }
                 return
             case 'fftFrame':
                 this._fftCbs = this._fftCbs.filter((cb) => cb(msg.bins) !== false)
@@ -303,8 +314,133 @@ export default class RemoteHost {
         this._fftCbs.push(cb)
     }
 
+    // ------------------------------------------------------------ preview
+    // WebRTC first (signaled through the relay; STUN keeps it working over
+    // WAN behind most NATs), throttled JPEG frames over the relay as the
+    // dependable fallback — frames traverse anything the controls traverse.
+
     captureStream() {
-        return null // live preview lands with the WebRTC milestone
+        return null // the panel uses canPreview()/previewElement() remotely
+    }
+
+    canPreview() {
+        return this.snapshotReceived && !!this._canPreview
+    }
+
+    setPreview(on) {
+        if (!!on === !!this._previewOn) return
+        this._previewOn = !!on
+        if (on) {
+            this._kickPreview()
+        } else {
+            this._send({ op: 'previewStop' })
+            this._framesOff()
+            this._closePc()
+            clearTimeout(this._rtcTimer)
+            if (this._previewVideo) this._previewVideo.srcObject = null
+        }
+    }
+
+    _kickPreview() {
+        this._send({ op: 'previewStart' })
+        clearTimeout(this._rtcTimer)
+        // no track in time -> the P2P route is blocked (symmetric NAT, no
+        // captureStream on the host…) -> switch to relayed frames
+        this._rtcTimer = setTimeout(() => { if (this._previewOn) this._framesOn() }, 5000)
+    }
+
+    previewElement(doc) {
+        if (!this._previewOn) return null
+        if (!this._previewWrap || this._previewWrap.ownerDocument !== doc) {
+            const wrap = doc.createElement('div')
+            wrap.className = 'vj-preview'
+            const video = doc.createElement('video')
+            video.muted = true
+            video.autoplay = true
+            video.playsInline = true
+            const img = doc.createElement('img')
+            img.className = 'vj-preview-frames'
+            img.alt = ''
+            img.style.display = 'none'
+            wrap.appendChild(video)
+            wrap.appendChild(img)
+            this._previewWrap = wrap
+            this._previewVideo = video
+            this._previewImg = img
+            if (this._rtcStream) video.srcObject = this._rtcStream
+            this._setPreviewMode(this._mode || 'rtc')
+        }
+        const p = this._previewVideo.play()
+        if (p && p.catch) p.catch(() => { /* resumes on autoplay */ })
+        return this._previewWrap
+    }
+
+    _setPreviewMode(mode) {
+        this._mode = mode
+        if (!this._previewVideo) return
+        this._previewVideo.style.display = mode === 'rtc' ? '' : 'none'
+        this._previewImg.style.display = mode === 'frames' ? '' : 'none'
+    }
+
+    _onRtc(msg) {
+        if (msg.kind === 'offer') {
+            this._closePc()
+            let pc
+            try {
+                pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+            } catch (e) {
+                this._framesOn()
+                return
+            }
+            this._pc = pc
+            pc.ontrack = (e) => {
+                this._rtcStream = e.streams[0] || new MediaStream([e.track])
+                if (this._previewVideo) {
+                    this._previewVideo.srcObject = this._rtcStream
+                    const p = this._previewVideo.play()
+                    if (p && p.catch) p.catch(() => {})
+                }
+                clearTimeout(this._rtcTimer)
+                this._framesOff()
+                this._setPreviewMode('rtc')
+            }
+            pc.onicecandidate = (e) => {
+                if (e.candidate) this._send({ op: 'rtc', kind: 'candidate', candidate: e.candidate })
+            }
+            pc.oniceconnectionstatechange = () => {
+                if (this._previewOn && ['failed', 'disconnected', 'closed'].includes(pc.iceConnectionState)) {
+                    this._framesOn()
+                }
+            }
+            pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp })
+                .then(() => pc.createAnswer())
+                .then((a) => pc.setLocalDescription(a))
+                .then(() => this._send({ op: 'rtc', kind: 'answer', sdp: pc.localDescription.sdp }))
+                .catch(() => this._framesOn())
+        } else if (msg.kind === 'candidate' && this._pc) {
+            this._pc.addIceCandidate(msg.candidate).catch(() => { /* stale */ })
+        }
+    }
+
+    _closePc() {
+        if (this._pc) {
+            try { this._pc.close() } catch (e) { /* already closed */ }
+            this._pc = null
+        }
+        this._rtcStream = null
+    }
+
+    _framesOn() {
+        if (this._framesMode) return
+        this._framesMode = true
+        this._send({ op: 'frames', on: true })
+        this._setPreviewMode('frames')
+    }
+
+    _framesOff() {
+        if (!this._framesMode) return
+        this._framesMode = false
+        this._send({ op: 'frames', on: false })
     }
 
     getGlobal(name) {

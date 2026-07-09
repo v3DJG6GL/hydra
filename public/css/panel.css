@@ -149,7 +149,8 @@
   border-bottom: 1px solid var(--vj-line);
 }
 
-.vj-preview video {
+.vj-preview video,
+.vj-preview img {
   display: block;
   width: 100%;
   max-height: 220px;
