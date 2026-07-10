@@ -525,7 +525,9 @@
   touch-action: none;
 }
 
-.vj-chip-src > .vj-chip-head { cursor: default; }
+/* source heads never drag-reorder — leave them as native scroll surface
+   so a touch can always pan the chain from the first chip */
+.vj-chip-src > .vj-chip-head { cursor: default; touch-action: auto; }
 
 .vj-chip-name {
   font-weight: 700;
@@ -1184,6 +1186,8 @@
     width: auto;
     height: auto;
     aspect-ratio: 16 / 10;
+    /* a faint module face so empty pads read as pads, not floating digits */
+    background: rgba(255, 255, 255, 0.03);
   }
   .vj-scenes-tools {
     flex-direction: row;

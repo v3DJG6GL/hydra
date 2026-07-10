@@ -704,9 +704,16 @@ export default class VJPanel {
                 // or the long-press on a scene pad would also recall it
                 const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault() }
                 doc.addEventListener('click', swallow, true)
-                doc.addEventListener('pointerup', () => {
+                const unswallow = () => {
+                    doc.removeEventListener('pointerup', later, true)
+                    doc.removeEventListener('pointercancel', later, true)
                     win.setTimeout(() => doc.removeEventListener('click', swallow, true), 60)
-                }, { once: true, capture: true })
+                }
+                const later = () => unswallow()
+                doc.addEventListener('pointerup', later, true)
+                doc.addEventListener('pointercancel', later, true)
+                // failsafe: never leave the deck eating clicks
+                win.setTimeout(unswallow, 1500)
                 target.dispatchEvent(new win.MouseEvent('contextmenu', {
                     bubbles: true, cancelable: true, view: win, clientX: x0, clientY: y0
                 }))
