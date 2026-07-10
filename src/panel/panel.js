@@ -769,6 +769,9 @@ export default class VJPanel {
         redoBtn.onclick = () => this.historyStep('redo')
         rail.appendChild(redoBtn)
 
+        // on phone widths the rail wraps here: transport above, toggles below
+        rail.appendChild(el(d, 'span', 'vj-railbreak'))
+
         const fft = el(d, 'button', 'vj-fft' + (this.fftShown ? ' vj-on' : ''), '∿ FFT')
         fft.title = this.tr('panel.fft', 'toggle the audio FFT monitor — right-click adds audio settings to the sketch')
         fft.onclick = () => {

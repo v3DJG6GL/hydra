@@ -113,6 +113,10 @@
 
 .vj-spacer { flex: 1; }
 
+/* forced wrap point before the monitor toggles (FFT/CODE/LIVE) — inert on
+   wide rails, becomes a line break on phone widths */
+.vj-railbreak { display: none; }
+
 .vj-hush {
   border: 1px solid var(--vj-line);
   padding: 3px 12px;
@@ -1126,6 +1130,35 @@
 @media (max-width: 640px) {
   #vj-dock { max-height: 60vh; }
   .vj-brand { display: none; }
+
+  /* two-tier rail: transport (hush/shuffle/dice/undo/redo) on top, the
+     monitor toggles below — every control stays visible and one tap away */
+  .vj-toprail { flex-wrap: wrap; gap: 4px 8px; padding: 6px 8px; }
+  .vj-toprail .vj-railbreak { display: block; flex: 1 0 100%; height: 0; }
+
+  /* scene bank becomes a pad grid: 4 per row, all 8 visible, no scrolling.
+     the tools drop into their own slim row underneath */
+  .vj-scenes { flex-wrap: wrap; gap: 6px; padding: 8px; }
+  .vj-scene {
+    flex: 1 1 calc(25% - 5px);
+    width: auto;
+    height: auto;
+    aspect-ratio: 16 / 10;
+  }
+  .vj-scenes-tools {
+    flex-direction: row;
+    flex: 1 0 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
+
+/* landscape phones: keep the strip a single row but stop the tools column
+   from inflating it (three stacked touch targets ≈ 110px of dead height) */
+@media (max-height: 520px) {
+  .vj-scenes-tools { flex-direction: row; }
+  .vj-preview video,
+  .vj-preview img { max-height: 34vh; }
 }
 
 /* ---------- remote deck ---------- */
