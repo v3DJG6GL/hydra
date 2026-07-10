@@ -21,6 +21,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release on tv-v* tags
     steps:
       - uses: actions/checkout@v4
 
