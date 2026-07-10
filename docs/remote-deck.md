@@ -83,6 +83,31 @@ localStorage, so subsequent plain loads keep them).
   `Connection` headers). The relay pings every 25s, which keeps sockets
   under typical idle timeouts.
 
+## Install the deck as an app (PWA)
+
+The deck page is an installable web app: fullscreen (no browser chrome, no
+status bar), its own icon, instant launches from a runtime cache, and the
+pairing persisted on the device — a home-screen launch reconnects straight
+away, no re-scanning.
+
+- **Android (WAN/https mode)**: open the deck link once in Chrome, then
+  choose **Install app** from the ⋮ menu (or the install prompt). The
+  installed deck launches truly fullscreen.
+- **iOS / iPadOS**: open the deck link in Safari, **Share → Add to Home
+  Screen**. If iOS launches the installed app without the pairing (it starts
+  apps from a clean URL and home-screen apps get their own storage), the
+  pairing screen appears once — type the room and token by hand, or re-open
+  the QR link in the app; it's remembered from then on.
+- **LAN/http mode**: plain http is not a secure context, so Chrome offers no
+  install and no offline cache — "Add to home screen" just makes a browser
+  shortcut. iOS's Add to Home Screen still gives a standalone fullscreen
+  deck. For the full app experience on Android, use WAN mode.
+
+Installing changes nothing about pairing or security: the app is just
+`deck.html`, and **rotate pairing** logs installed decks out like any other.
+The service worker only ever controls `/deck.html` — the renderer page talks
+straight to the network, kiosk setups included.
+
 ## Touch gestures (phones and tablets)
 
 The deck reshapes itself on phone widths — the top rail wraps into a

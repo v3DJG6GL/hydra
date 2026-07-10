@@ -1,0 +1,17 @@
+{
+  "id": "/deck.html",
+  "name": "hydra · VJ deck",
+  "short_name": "VJ deck",
+  "description": "Remote control surface for a hydra renderer — faders, scene bank, function palette and live preview.",
+  "start_url": "/deck.html?source=pwa",
+  "scope": "/deck.html",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone", "minimal-ui"],
+  "background_color": "#0b0b10",
+  "theme_color": "#0b0b10",
+  "icons": [
+    { "src": "/icons/deck-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/deck-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/deck-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

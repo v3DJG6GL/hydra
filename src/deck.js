@@ -27,7 +27,52 @@ if (navigator.wakeLock) {
     document.addEventListener('visibilitychange', () => { if (!document.hidden) grab() })
 }
 
-const creds = parseDeckHash(location.hash)
+// installable PWA: cache the deck for instant launches. Scope is the literal
+// '/deck.html' so the renderer page is never controlled. Secure contexts only
+// (WAN https / localhost) — on plain LAN http there's simply no SW.
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/deck-sw.js', { scope: '/deck.html' }).catch(() => {})
+}
+
+// A home-screen install launches at the manifest start_url — no #room=…
+// fragment. So every fragment pairing is persisted per-device, and when the
+// deck runs as an installed app (display-mode from the manifest) it resumes
+// from that. In a normal browser tab the bare URL keeps showing the pairing
+// screen, as documented.
+const DECK_ROOM_KEY = 'hydra-vj-deck-room'
+const DECK_TOKEN_KEY = 'hydra-vj-deck-token'
+
+// the manifest start_url carries ?source=pwa as a launch marker — belt and
+// braces next to display-mode, which some webviews misreport
+const installed = (window.matchMedia &&
+    window.matchMedia('(display-mode: fullscreen), (display-mode: standalone), (display-mode: minimal-ui)').matches) ||
+    new URLSearchParams(location.search).get('source') === 'pwa'
+
+function storedDeckCreds() {
+    try {
+        const room = localStorage.getItem(DECK_ROOM_KEY)
+        const token = localStorage.getItem(DECK_TOKEN_KEY)
+        return room && token ? { room, token } : null
+    } catch (e) { return null } // private mode
+}
+
+function persistDeckCreds({ room, token }) {
+    try {
+        localStorage.setItem(DECK_ROOM_KEY, room)
+        localStorage.setItem(DECK_TOKEN_KEY, token)
+    } catch (e) { /* private mode */ }
+}
+
+function clearDeckCreds() {
+    try {
+        localStorage.removeItem(DECK_ROOM_KEY)
+        localStorage.removeItem(DECK_TOKEN_KEY)
+    } catch (e) { /* private mode */ }
+}
+
+const hashCreds = parseDeckHash(location.hash)
+if (hashCreds) persistDeckCreds(hashCreds)
+const creds = hashCreds || (installed ? storedDeckCreds() : null)
 
 // ---- pairing screens: "module face" — the pair page is a piece of deck
 // hardware. Chassis + silkscreen labels, the QR in a patch-bay frame with
@@ -148,6 +193,7 @@ function showPairScreen(error) {
                 localStorage.removeItem('hydra-vj-room')
                 localStorage.removeItem('hydra-vj-token')
             } catch (e) { /* private mode */ }
+            clearDeckCreds()
             location.reload()
         }
         mod = pairModule({
@@ -256,6 +302,7 @@ function boot({ room, token }) {
     host.on('toast', toast)
     host.on('fatal', (code) => {
         if (code === 'unauthorized' || code === 'bad-token' || code === 'bad-room') {
+            clearDeckCreds() // don't boot an installed deck into the same rejection
             showPairScreen('pairing rejected (' + code + ') — the renderer may have rotated its token; re-pair below.')
         }
     })
