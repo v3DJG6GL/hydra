@@ -31,16 +31,32 @@ services:
     container_name: hydra-relay
     restart: unless-stopped
     # user: "568:568"
-    # Live-preview bandwidth budgets, pushed to the renderer on connect.
-    # Unset vars keep the mode defaults (WAN https: 1200/150/480 — LAN http:
-    # 6000/400/720). Prefix LAN_/WAN_ to scope a var to one mode when the
-    # same stack serves both (e.g. HYDRA_PREVIEW_WAN_FRAME_KBPS). See
-    # docs/remote-deck.md.
+    # Live-preview bandwidth budgets, pushed to the renderer on connect
+    # (docs/remote-deck.md). Three layers, least -> most specific:
+    #   1. nothing set — mode defaults apply (shown below)
+    #   2. HYDRA_PREVIEW_*     — applies to both modes
+    #   3. HYDRA_PREVIEW_WAN_* / HYDRA_PREVIEW_LAN_* — that mode only,
+    #      beats the unscoped var. Only needed when ONE stack serves both
+    #      modes at once (LAN http plus a TLS proxy in front); separate
+    #      LAN and WAN deployments just use layer 2 on each relay.
+    # The relay tells the modes apart by the renderer's Origin scheme:
+    # https = WAN, plain http = LAN.
     # environment:
-    #   HYDRA_PREVIEW_RTC_KBPS: "1200"    # WebRTC sender cap (kbit/s)
-    #   HYDRA_PREVIEW_FRAME_KBPS: "150"   # relayed-frames budget (KB/s)
-    #   HYDRA_PREVIEW_FRAME_WIDTH: "480"  # preview resolution ceiling (px)
-    #   HYDRA_PREVIEW_MIN_FRAME_MS: "350" # fastest frame cadence
+    #   ## both modes:
+    #   # HYDRA_PREVIEW_RTC_KBPS: "1200"     # WebRTC sender cap (kbit/s)
+    #   # HYDRA_PREVIEW_FRAME_KBPS: "150"    # relayed-frames budget (KB/s)
+    #   # HYDRA_PREVIEW_FRAME_WIDTH: "480"   # preview resolution ceiling (px)
+    #   # HYDRA_PREVIEW_MIN_FRAME_MS: "350"  # fastest frame cadence
+    #   ## WAN (https) renderers only — mode defaults shown:
+    #   # HYDRA_PREVIEW_WAN_RTC_KBPS: "1200"
+    #   # HYDRA_PREVIEW_WAN_FRAME_KBPS: "150"
+    #   # HYDRA_PREVIEW_WAN_FRAME_WIDTH: "480"
+    #   # HYDRA_PREVIEW_WAN_MIN_FRAME_MS: "350"
+    #   ## LAN (http) renderers only — mode defaults shown:
+    #   # HYDRA_PREVIEW_LAN_RTC_KBPS: "6000"
+    #   # HYDRA_PREVIEW_LAN_FRAME_KBPS: "400"
+    #   # HYDRA_PREVIEW_LAN_FRAME_WIDTH: "720"
+    #   # HYDRA_PREVIEW_LAN_MIN_FRAME_MS: "350"
     volumes:
       # per-room scene banks survive restarts (and kiosk browsers that wipe
       # localStorage)
