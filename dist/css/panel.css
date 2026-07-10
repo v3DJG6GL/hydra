@@ -1170,7 +1170,7 @@
   .vj-value { min-height: 26px; display: inline-flex; align-items: center; justify-content: flex-end; }
   /* 16px text fields: anything smaller makes iOS zoom the page on focus */
   .vj-value-input, .vj-palette-search, .vj-src-url, .vj-rangeform input,
-  .vj-pair-form input, .vj-pair-url { font-size: 16px; }
+  .vj-pair-in, .vj-pair-url { font-size: 16px; }
   .vj-value-input { width: 84px; }
 }
 
@@ -1314,8 +1314,11 @@
   to { opacity: 1; transform: none; }
 }
 
-/* pairing screen — also used as the "pair another device" overlay on a
-   running deck, so it must stack above the chips (which carry z-index: 1) */
+/* pairing screens — "module face": the pair page is another piece of deck
+   hardware (chassis, silkscreen labels, tally-bracket QR bay, hazard tape).
+   Also used as the "pair another device" overlay on a running deck, so it
+   must stack above the chips (which carry z-index: 1). Lives outside
+   .vj-panel, so tokens are spelled out as literals here. */
 .vj-remote-pair {
   position: fixed;
   inset: 0;
@@ -1323,68 +1326,168 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   display: flex;
-  background: #0b0b10;
-  color: #ccc;
+  flex-direction: column;
+  background: #0a0b0d;
+  color: #d6dae0;
   font-family: 'Chivo', sans-serif;
+  box-sizing: border-box;
 }
+.vj-remote-pair *, .vj-remote-pair *::before, .vj-remote-pair *::after { box-sizing: border-box; }
 .vj-remote-pair[hidden] { display: none; }
-.vj-pair-box {
-  /* auto margins center the box but stay reachable when it overflows a
-     small screen (justify-content: center clips the left edge instead) */
+/* :where() keeps the reset at zero specificity so the .vj-pair-* classes
+   below can restore borders/backgrounds without extra qualification */
+:where(.vj-remote-pair) button, :where(.vj-remote-pair) input {
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+}
+.vj-remote-pair button { cursor: pointer; }
+.vj-remote-pair :focus-visible { outline: 1px solid #ff0066; outline-offset: 1px; }
+
+.vj-pair-wrap { flex: 1; display: flex; flex-direction: column; min-height: 100%; }
+
+.vj-pair-rail {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
+  border-bottom: 1px solid #2a2e35;
+  background: linear-gradient(180deg, #101216, #0a0b0d);
+}
+.vj-pair-brand { font-weight: 700; font-size: 11px; letter-spacing: 0.32em; color: #d6dae0; white-space: nowrap; }
+.vj-pair-railsep { color: #3a3f48; }
+.vj-pair-railmode { font-size: 10px; letter-spacing: 0.28em; color: #8891a0; }
+.vj-pair-railroom {
+  margin-left: auto;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: #8891a0;
+}
+
+/* auto margins center the module but keep it reachable when it overflows a
+   small screen (justify/align-content: center clips the top edge instead) */
+.vj-pair-stage { flex: 1; display: flex; padding: 24px 16px; }
+.vj-pair-module {
   margin: auto;
   width: 100%;
-  max-width: 440px;
-  padding: 24px 16px;
+  max-width: 700px;
+  border: 1px solid #2a2e35;
+  background: #101216;
+  border-radius: 2px;
 }
-.vj-pair-box h1 {
-  font-size: 15px;
-  letter-spacing: 0.12em;
-  color: #fff;
+
+.vj-pair-errorbar {
+  border-bottom: 1px solid #7a2030;
+  background: rgba(255, 45, 107, 0.08);
+  color: #ff7a8a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 10px 18px;
 }
-.vj-pair-box p { font-size: 13px; line-height: 1.5; color: #9a9aa8; }
-.vj-pair-error { color: #ff9aa8; }
-.vj-pair-qr {
-  width: min(320px, 70vw);
-  margin: 14px 0;
-  background: #fff;
-  padding: 8px;
-}
-.vj-pair-qr svg { display: block; width: 100%; height: auto; }
+
+.vj-pair-body { display: flex; align-items: flex-start; gap: 32px; padding: 30px 32px 26px; }
+
+/* QR bay: white tile framed by the four output-tally corner brackets */
+.vj-pair-qrbay { flex: none; width: 226px; text-align: center; }
+.vj-pair-qrframe { position: relative; padding: 12px; }
+.vj-pair-qrtile { background: #fff; padding: 8px; }
+.vj-pair-qrtile svg { display: block; width: 100%; height: auto; }
+.vj-pair-qrframe > i { position: absolute; width: 16px; height: 16px; border: 0 solid; }
+.vj-pair-qrframe > i:nth-of-type(1) { top: 0; left: 0; border-top-width: 2px; border-left-width: 2px; border-color: #ff2d6b; }
+.vj-pair-qrframe > i:nth-of-type(2) { top: 0; right: 0; border-top-width: 2px; border-right-width: 2px; border-color: #23e0a0; }
+.vj-pair-qrframe > i:nth-of-type(3) { bottom: 0; left: 0; border-bottom-width: 2px; border-left-width: 2px; border-color: #4da6ff; }
+.vj-pair-qrframe > i:nth-of-type(4) { bottom: 0; right: 0; border-bottom-width: 2px; border-right-width: 2px; border-color: #ffb000; }
+.vj-pair-silk { margin-top: 10px; font-size: 9.5px; font-weight: 700; letter-spacing: 0.24em; color: #8891a0; }
+
+.vj-pair-ctrl { flex: 1; min-width: 0; }
+.vj-pair-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: 0.3em; color: #ff0066; margin-bottom: 10px; }
+.vj-pair-title { font-size: 19px; font-weight: 400; line-height: 1.35; margin: 0 0 10px; color: #d6dae0; }
+.vj-pair-expl { font-size: 12.5px; line-height: 1.55; color: #8891a0; margin: 0 0 18px; }
+
+.vj-pair-linkrow { display: flex; margin-bottom: 14px; }
 .vj-pair-url {
-  width: 100%;
-  box-sizing: border-box;
-  background: #16161f;
-  border: 1px solid #333;
-  color: #9a9aa8;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 11px;
-  padding: 8px;
-  margin-bottom: 10px;
+  color: #8891a0;
+  background: #0a0b0d;
+  border: 1px solid #2a2e35;
+  border-right: 0;
+  padding: 11px 12px;
 }
-.vj-pair-connect, .vj-pair-form button {
-  background: #26263a;
-  border: 1px solid #444;
-  color: #fff;
-  font-family: inherit;
-  font-size: 13px;
-  padding: 10px 16px;
-  min-height: 44px;
-  cursor: pointer;
+.vj-pair-copy {
+  flex: none;
+  min-width: 76px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: #d6dae0;
+  background: #14161a;
+  border: 1px solid #2a2e35;
+  padding: 0 18px;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.vj-pair-connect {
+.vj-pair-copy:hover { background: #ff0066; border-color: #ff0066; color: #fff; }
+.vj-pair-copied, .vj-pair-copied:hover { background: none; border-color: #23e0a0; color: #23e0a0; }
+
+.vj-pair-btn {
   display: block;
   width: 100%;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: #d6dae0;
+  border: 1px solid #2a2e35;
+  border-radius: 2px;
+  padding: 12px 16px;
+  min-height: 44px;
   margin-top: 8px;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.vj-pair-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.vj-pair-form input {
-  flex: 1 1 130px;
-  min-width: 0;
-  background: #16161f;
-  border: 1px solid #333;
-  color: #ddd;
+.vj-pair-btn:hover { background: #ff0066; border-color: #ff0066; color: #fff; }
+.vj-pair-danger { color: #8891a0; }
+.vj-pair-danger:hover { background: none; border-color: #ff2d6b; color: #ff2d6b; }
+
+/* manual room/token entry — takes the QR bay's place when nothing is paired */
+.vj-pair-form { display: flex; flex-direction: column; gap: 6px; padding: 12px; }
+.vj-pair-in {
+  width: 100%;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 12px;
-  padding: 8px;
+  color: #d6dae0;
+  background: #0a0b0d;
+  border: 1px solid #2a2e35;
+  padding: 10px;
 }
-.vj-pair-form button { flex: 1 0 100%; }
+.vj-pair-in::placeholder { color: #5a616e; }
+.vj-pair-form .vj-pair-btn { margin-top: 2px; }
+
+.vj-pair-hazard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid #2a2e35;
+  padding: 11px 18px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #ffb000;
+  background: repeating-linear-gradient(-45deg, rgba(255, 176, 0, 0.07) 0 10px, transparent 10px 20px);
+}
+.vj-pair-hazard-glyph { font-size: 12px; }
+
+@media (max-width: 700px) {
+  .vj-pair-body { flex-direction: column; align-items: center; gap: 20px; padding: 24px 20px 22px; }
+  .vj-pair-qrbay { width: min(226px, 100%); }
+  .vj-pair-ctrl { width: 100%; }
+  .vj-pair-rail { gap: 8px; }
+}
