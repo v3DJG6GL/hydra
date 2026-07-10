@@ -202,7 +202,8 @@ function showPairScreen(error) {
             bay: qrBay(url),
             eyebrow: 'PAIR A DECK',
             title: 'Control this renderer from a tablet or phone',
-            explainer: 'Open this link on the device that will run the deck — scan the code, or copy the link across. Anyone with the link has full control of the visuals.',
+            explainer: 'Open this link on the device that will run the deck — scan the code, or copy the link across. Anyone with the link has full control of the visuals. ' +
+                'Linking a TV that shows a pairing code? Open the deck below, then tap the QR button in its top rail.',
             children: [linkRow(url), here, rot]
         })
     } else {
