@@ -4,6 +4,7 @@ import Component from 'choo/component'
 // const HydraSynth = require('./../../../../../hydra-synth')
 import P5 from './../lib/p5-wrapper.js'
 import PatchBay from './../lib/patch-bay/pb-live.js'
+import { isDisplay } from './../lib/display-mode.js'
 
 let pb
 
@@ -26,7 +27,9 @@ export default class HydraCanvas extends Component {
     let precisionValue = isIOS ? 'highp' : 'mediump'
 
 
-    const hydraOptions = { detectAudio: true, canvas: element.querySelector("canvas"), precision: precisionValue }
+    // display mode (TV/projector kiosk): no local mic — a.fft comes from the
+    // fft-bus (deck stream or the app shell's native capture) instead
+    const hydraOptions = { detectAudio: !isDisplay(), canvas: element.querySelector("canvas"), precision: precisionValue }
 
     // a hydra boot failure (no WebGL context: GPU driver hiccup, context
     // exhaustion) must not propagate — the load hooks of sibling components

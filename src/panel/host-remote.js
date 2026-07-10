@@ -48,6 +48,11 @@ export default class RemoteHost {
         this.transforms = null
         this.globals = { speed: 1, bpm: 30 }
         this.showCode = true
+        this.caps = [] // relay feature flags from welcome (pair, fft2, diag)
+        this.fftState = null // {mode, active, sourceDeckId, bins} from the host
+        this.displayInfo = null // {on, tier} when the renderer runs in display mode
+        this.hostDiag = null // last {t:'diag'} device readout (display OSD)
+        this.fftCapture = null // deck.js attaches an FftCapture instance
 
         this.lb = new RemoteLiveBind(this)
         this._reqId = 1
@@ -162,11 +167,16 @@ export default class RemoteHost {
                 this.id = msg.id
                 this.connected = true
                 this.hostPresent = !!msg.hostPresent
+                this.caps = Array.isArray(msg.caps) ? msg.caps : []
                 this._backoff = BACKOFF_MIN
                 this._fire('status')
                 // the host pushes a snapshot on deckJoined; ask anyway in case
                 // it raced our welcome
                 this._send({ op: 'reqSnapshot' })
+                // a reconnect handed us a fresh relay id — re-arm the per-id
+                // subscriptions and roles this deck held
+                if (this._statsOn && this._previewOn) this._send({ op: 'diag', on: true })
+                if (this.fftCapture && this.fftCapture.enabled) this._send({ op: 'fftPub', on: true })
                 return
             case 'hostState':
                 this.hostPresent = !!msg.present
@@ -183,6 +193,8 @@ export default class RemoteHost {
                 this.showCode = msg.showCode !== false
                 this.lb.clean = !!msg.lbClean && this.lb.clean
                 this._canPreview = !!msg.canPreview
+                if (msg.fft) this._applyFftState(msg.fft)
+                if (msg.display) this.displayInfo = msg.display
                 this.snapshotReceived = true
                 if (this._previewOn) this._kickPreview() // resumed after a reconnect
                 this._fire('code-changed', 'snapshot')
@@ -237,6 +249,30 @@ export default class RemoteHost {
                 return
             case 'fftFrame':
                 this._fftCbs = this._fftCbs.filter((cb) => cb(msg.bins) !== false)
+                return
+            case 'fftState':
+                this._applyFftState(msg)
+                return
+            case 'fftCtl':
+                // the renderer ran a.setSmooth()/setCutoff()/setScale()/
+                // setBins() — keep this deck's capture pipeline in sync
+                if (this.fftCapture) this.fftCapture.applyCtl(msg.fn, msg.value)
+                return
+            case 'display':
+                this.displayInfo = { on: !!msg.on, tier: msg.tier }
+                this._fire('ui-changed')
+                return
+            case 'diag':
+                this.hostDiag = msg // rendered by the OSD's 1s tick
+                return
+            case 'pairResult':
+                this._resolve(msg.reqId, msg)
+                return
+            case 'displays':
+                this._resolve(msg.reqId, msg)
+                return
+            case 'pairEvent':
+                this._fire('pair-event', msg)
                 return
             case 'ack':
                 this._resolve(msg.reqId, msg)
@@ -331,6 +367,97 @@ export default class RemoteHost {
 
     onFftFrame(cb) {
         this._fftCbs.push(cb)
+    }
+
+    // ---- fft source election (this deck's mic streaming to the renderer)
+
+    _applyFftState(s) {
+        this.fftState = s
+        // displaced by another deck (or the source was switched away while
+        // we streamed): stop capturing, the button unlights on re-render
+        if (this.fftCapture && this.fftCapture.enabled &&
+            s.sourceDeckId !== this.id && this.fftCapture.claimed) {
+            this.fftCapture.claimed = false
+            this.fftCapture.stop()
+        }
+        if (this.fftCapture && s.bins) this.fftCapture.setBins(s.bins)
+        this._fire('fft-state', s)
+        this._fire('ui-changed')
+    }
+
+    isFftSource() {
+        return !!(this.fftState && this.id && this.fftState.sourceDeckId === this.id)
+    }
+
+    async toggleFftPub() {
+        if (!this.fftCapture) return false
+        if (this.isFftSource() || this.fftCapture.enabled) {
+            this.fftCapture.claimed = false
+            this.fftCapture.stop()
+            this._send({ op: 'fftPub', on: false })
+            return false
+        }
+        const ok = await this.fftCapture.start() // inside the click gesture
+        if (!ok) {
+            this._fire('toast', 'microphone unavailable — check permissions (needs https or localhost)', 'error')
+            return false
+        }
+        this.fftCapture.claimed = true
+        this._send({ op: 'fftPub', on: true })
+        return true
+    }
+
+    sendFftBins(bins) {
+        this._send({ op: 'fftBins', bins })
+    }
+
+    setFftSource(source) {
+        this._send({ op: 'fftSource', source })
+    }
+
+    setDisplayTier(tier) {
+        this._send({ op: 'displayTier', tier })
+    }
+
+    // ---- display pairing (short-code flow, relay-level frames — these are
+    // relay messages, not host intents, hence _sendRelay)
+
+    _sendRelay(obj) {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify(obj))
+            return true
+        }
+        return false
+    }
+
+    _relayRequest(frame, cb, timeoutMs = 5000) {
+        const reqId = this._reqId++
+        const timer = setTimeout(() => {
+            this._pending.delete(reqId)
+            cb(null)
+        }, timeoutMs)
+        this._pending.set(reqId, { cb, timer })
+        if (!this._sendRelay({ ...frame, reqId })) {
+            clearTimeout(timer)
+            this._pending.delete(reqId)
+            cb(null)
+        }
+    }
+
+    pairApprove(code, name, requireConfirm, cb) {
+        this._relayRequest({ t: 'pairApprove', code, name, requireConfirm: !!requireConfirm }, cb)
+    }
+
+    listDisplays(cb) {
+        this._relayRequest({ t: 'displayList' }, cb)
+    }
+
+    revokeDisplay(id, cb) {
+        this._relayRequest({ t: 'displayRevoke', id }, cb)
+    }
+
+    renameDisplay(id, name, cb) {
+        this._relayRequest({ t: 'displayRename', id, name }, cb)
     }
 
     // ------------------------------------------------------------ preview
@@ -515,11 +642,29 @@ export default class RemoteHost {
         if (on && !this._statsTimer) {
             this._statsTimer = setInterval(() => this._updateStats(), 1000)
             this._updateStats()
+            this._send({ op: 'diag', on: true }) // host device line (display kiosks)
         } else if (!on && this._statsTimer) {
             clearInterval(this._statsTimer)
             this._statsTimer = null
             this._rtcPrev = null
+            this._send({ op: 'diag', on: false })
+            this.hostDiag = null
         }
+    }
+
+    // "720p tier · 58 fps · Mali-G52 · deck fft" — the renderer device's own
+    // readout, shown under the stream lines while the host streams diag
+    _hostDiagLine() {
+        const d = this.hostDiag
+        if (!d || Date.now() - (d.ts || 0) > 5000) return null
+        const gpu = (d.webglRenderer || '').replace(/^ANGLE \((.+)\)$/, '$1').split(',')[0].trim()
+        const parts = []
+        if (d.display && d.tier) parts.push(d.tier === 'native' ? 'native res' : d.tier + 'p tier')
+        if (d.res) parts.push(d.res.w + '×' + d.res.h)
+        if (Number.isFinite(d.fps)) parts.push(d.fps + ' fps')
+        if (gpu) parts.push(gpu.length > 28 ? gpu.slice(0, 27) + '…' : gpu)
+        if (d.fftActive && d.fftActive !== 'off') parts.push(d.fftActive + ' fft')
+        return parts.join(' · ')
     }
 
     _updateStats() {
@@ -580,12 +725,19 @@ export default class RemoteHost {
 
     _renderStats(el, path, l1, l2, l3) {
         const d = el.ownerDocument
-        while (el.children.length < 3) el.appendChild(d.createElement('div'))
+        const hostLine = this._hostDiagLine()
+        const want = hostLine ? 4 : 3
+        while (el.children.length < want) el.appendChild(d.createElement('div'))
+        while (el.children.length > want) el.removeChild(el.lastChild)
         el.children[0].className = 'vj-osd-path ' + (path === 'rtc' ? 'vj-osd-rtc' : 'vj-osd-frames')
         el.children[0].textContent = l1
         el.children[1].textContent = l2
         el.children[2].className = 'vj-osd-dim'
         el.children[2].textContent = l3
+        if (hostLine) {
+            el.children[3].className = 'vj-osd-dim'
+            el.children[3].textContent = hostLine
+        }
     }
 
     _onRtc(msg) {

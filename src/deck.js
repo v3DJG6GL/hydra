@@ -4,6 +4,7 @@
 // show up in server logs; without them this page becomes the pairing screen.
 import VJPanel from './panel/panel.js'
 import RemoteHost from './panel/host-remote.js'
+import FftCapture from './panel/fft-capture.js'
 import { parseDeckHash, deckUrl, relayUrl } from './panel/wire.js'
 
 const statusEl = document.getElementById('vj-remote-status')
@@ -242,6 +243,86 @@ function renderQr(el, url) {
         .catch(() => { el.remove() })
 }
 
+// "LINK A TV / DISPLAY": approve the short code a pairing display shows on
+// its screen. The code is single-use and useless without this approval, so
+// a projected/visible TV screen leaks nothing (unlike the deck QR).
+function displayLinkModule(host) {
+    const bay = h('div', 'vj-pair-qrbay')
+    const form = h('form', 'vj-pair-form')
+    const code = h('input', 'vj-pair-in')
+    code.placeholder = 'code shown on the TV'
+    code.autocapitalize = 'characters'
+    code.oninput = () => { code.value = code.value.toUpperCase() }
+    const name = h('input', 'vj-pair-in')
+    name.placeholder = 'name (optional, e.g. stage tv)'
+    const confirmRow = h('label', 'vj-pair-confirmrow')
+    const confirmBox = h('input')
+    confirmBox.type = 'checkbox'
+    confirmRow.appendChild(confirmBox)
+    confirmRow.appendChild(h('span', null, ' require OK on the TV'))
+    const go = h('button', 'vj-pair-btn', 'APPROVE')
+    form.append(code, name, confirmRow, go)
+    bay.appendChild(form)
+    bay.appendChild(h('div', 'vj-pair-silk', 'TYPE THE CODE FROM THE DISPLAY'))
+
+    const list = h('div', 'vj-pair-displays')
+    const refreshList = () => {
+        host.listDisplays((res) => {
+            list.textContent = ''
+            if (!res || !Array.isArray(res.displays)) return
+            if (!res.displays.length) {
+                list.appendChild(h('div', 'vj-pair-dispempty', 'no paired displays yet'))
+                return
+            }
+            res.displays.forEach((disp) => {
+                const row = h('div', 'vj-pair-disprow')
+                row.appendChild(h('span', 'vj-pair-dispdot' + (disp.connected ? ' vj-on' : ''), '●'))
+                const seen = disp.connected ? 'connected'
+                    : disp.lastSeenAt ? 'seen ' + new Date(disp.lastSeenAt).toLocaleDateString() : 'never connected'
+                row.appendChild(h('span', 'vj-pair-dispname', disp.name + ' · ' + seen))
+                const un = h('button', 'vj-pair-unpair', 'UNPAIR')
+                un.onclick = () => {
+                    if (!confirm('Unpair "' + disp.name + '"? It goes back to its pairing screen immediately.')) return
+                    host.revokeDisplay(disp.id, () => refreshList())
+                }
+                row.appendChild(un)
+                list.appendChild(row)
+            })
+        })
+    }
+    refreshList()
+
+    form.onsubmit = (e) => {
+        e.preventDefault()
+        const c = code.value.trim()
+        if (!c) return
+        go.disabled = true
+        host.pairApprove(c, name.value.trim(), confirmBox.checked, (res) => {
+            go.disabled = false
+            if (!res) toast('relay did not answer — try again', 'error')
+            else if (!res.ok) {
+                toast(res.error === 'rate-limited' ? 'too many attempts — wait a minute'
+                    : 'code not recognized — it may have expired; get a fresh one on the TV', 'error')
+            } else {
+                code.value = ''
+                toast(res.state === 'awaiting-confirm'
+                    ? 'approved — now press OK on the TV to finish'
+                    : 'display "' + (res.display && res.display.name) + '" linked')
+                refreshList()
+            }
+        })
+    }
+
+    return pairModule({
+        bay,
+        eyebrow: 'LINK A TV / DISPLAY',
+        title: 'Approve a display’s pairing code',
+        explainer: 'A TV or projector app showing a pairing code joins this room as a render-only display. ' +
+            'It can be unpaired here any time without re-pairing your decks.',
+        children: [list]
+    })
+}
+
 function boot({ room, token }) {
     const state = {
         panel: { open: true, popup: false, pip: false },
@@ -251,6 +332,11 @@ function boot({ room, token }) {
         hydra: null
     }
     const host = new RemoteHost({ url: relayUrl(), room, token })
+    host.fftCapture = new FftCapture(host)
+    host.on('pair-event', (ev) => {
+        if (ev.code === 'linked') toast('display "' + (ev.display && ev.display.name) + '" linked')
+        else if (ev.code === 'confirm-timeout') toast('TV did not confirm in time — approve a fresh code', 'error')
+    })
     // "pair another device": this deck shows its own pairing as a QR overlay
     host.requestPairUi = () => {
         const overlay = h('div', 'vj-remote-pair')
@@ -265,6 +351,8 @@ function boot({ room, token }) {
             explainer: 'Scan on the new device, or copy the link across — it gets the same full control of the renderer as this deck.',
             children: [linkRow(url), close]
         }))
+        // short-code display pairing needs a relay that speaks it
+        if (host.caps && host.caps.includes('pair')) stage.appendChild(displayLinkModule(host))
         overlay.appendChild(stage)
         overlay.onclick = (e) => { if (e.target === overlay || e.target === stage) overlay.remove() }
         document.body.appendChild(overlay)

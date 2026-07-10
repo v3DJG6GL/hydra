@@ -974,6 +974,12 @@
 .vj-menu-item:hover { background: var(--vj-chassis); }
 .vj-menu-item.vj-danger:hover { background: var(--vj-armed); color: #fff; }
 
+.vj-menu-sep {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--vj-line);
+}
+
 .vj-palette { width: min(300px, calc(100vw - 12px)); }
 
 .vj-palette-search {
@@ -1558,6 +1564,41 @@
 }
 .vj-pair-in::placeholder { color: #5a616e; }
 .vj-pair-form .vj-pair-btn { margin-top: 2px; }
+
+/* short-code display pairing: approve form + paired-displays list */
+.vj-pair-confirmrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #8891a0;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.vj-pair-displays { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.vj-pair-dispempty { font-size: 11px; color: #5a616e; padding: 6px 0; }
+.vj-pair-disprow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: #d6dae0;
+  border: 1px solid #2a2e35;
+  padding: 8px 10px;
+}
+.vj-pair-dispdot { color: #5a616e; font-size: 9px; }
+.vj-pair-dispdot.vj-on { color: #2fd66f; }
+.vj-pair-dispname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vj-pair-unpair {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #8891a0;
+  border: 1px solid #2a2e35;
+  padding: 5px 9px;
+  min-height: 30px;
+}
+.vj-pair-unpair:hover { border-color: #ff2d6b; color: #ff2d6b; }
 
 .vj-pair-hazard {
   display: flex;

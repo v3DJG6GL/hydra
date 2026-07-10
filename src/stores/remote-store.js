@@ -10,28 +10,62 @@
 // projected page itself.
 import { codeHash, relayUrl, randomId } from '../panel/wire.js'
 import { fmtNumber } from '../panel/metadata.js'
+import * as fftBus from '../lib/fft-bus.js'
+import { isDisplay, applyTier, currentTier, collectDiag, showReplacedOverlay } from '../lib/display-mode.js'
 
 const ROOM_KEY = 'hydra-vj-room'
 const TOKEN_KEY = 'hydra-vj-token'
+// display-mode credentials live under their own keys: a TV paired via the
+// short-code flow holds a revocable display token, never the room token,
+// and display mode must never mint credentials of its own (that would
+// silently claim a fresh room and defeat pairing entirely)
+const DISPLAY_ROOM_KEY = 'hydra-vj-display-room'
+const DISPLAY_TOKEN_KEY = 'hydra-vj-display-token'
 const FFT_INTERVAL_MS = 90
+const ROOM_RE = /^[A-Za-z0-9_-]{10,64}$/
+const TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/
 
 export default function remoteStore(state, emitter) {
     if (typeof WebSocket === 'undefined' || window.location.protocol === 'file:') return
 
+    fftBus.attachFftBus(emitter)
+
     let room = null
     let token = null
-    try {
-        const params = new URLSearchParams(window.location.search)
-        room = params.get('vjroom') || localStorage.getItem(ROOM_KEY)
-        token = params.get('vjtoken') || localStorage.getItem(TOKEN_KEY)
-        if (!room || !/^[A-Za-z0-9_-]{10,64}$/.test(room)) room = 'r' + randomId(12)
-        if (!token || !/^[A-Za-z0-9_-]{16,128}$/.test(token)) token = randomId(24)
-        localStorage.setItem(ROOM_KEY, room)
-        localStorage.setItem(TOKEN_KEY, token)
-    } catch (e) {
-        // private mode: session-scoped pairing still works
-        room = room || 'r' + randomId(12)
-        token = token || randomId(24)
+    let needsPairing = false
+    const params = (() => {
+        try { return new URLSearchParams(window.location.search) } catch (e) { return new URLSearchParams() }
+    })()
+    if (isDisplay()) {
+        // kiosk pinning (?vjroom=&vjtoken=) still bypasses pairing; otherwise
+        // use a previously paired display credential or run the code flow
+        try {
+            room = params.get('vjroom') || localStorage.getItem(DISPLAY_ROOM_KEY)
+            token = params.get('vjtoken') || localStorage.getItem(DISPLAY_TOKEN_KEY)
+        } catch (e) { /* private mode */ }
+        if (!ROOM_RE.test(String(room || '')) || !TOKEN_RE.test(String(token || ''))) {
+            room = null
+            token = null
+            needsPairing = true
+        } else {
+            try {
+                localStorage.setItem(DISPLAY_ROOM_KEY, room)
+                localStorage.setItem(DISPLAY_TOKEN_KEY, token)
+            } catch (e) { /* private mode */ }
+        }
+    } else {
+        try {
+            room = params.get('vjroom') || localStorage.getItem(ROOM_KEY)
+            token = params.get('vjtoken') || localStorage.getItem(TOKEN_KEY)
+            if (!room || !ROOM_RE.test(room)) room = 'r' + randomId(12)
+            if (!token || !TOKEN_RE.test(token)) token = randomId(24)
+            localStorage.setItem(ROOM_KEY, room)
+            localStorage.setItem(TOKEN_KEY, token)
+        } catch (e) {
+            // private mode: session-scoped pairing still works
+            room = room || 'r' + randomId(12)
+            token = token || randomId(24)
+        }
     }
 
     state.vjRemote = { room, token, connected: false, decks: 0 }
@@ -40,9 +74,13 @@ export default function remoteStore(state, emitter) {
     let seq = 0
     let backoff = 1000
     let closedByReplace = false
+    let stopped = false // display credential revoked — back to pairing, no retries
     const fftSubs = new Set()
+    const diagSubs = new Set()
     const ensured = new Map() // deckId -> Set(path) for disconnect auto-commit
     let fftTimer = null
+    let diagTimer = null
+    let fftSourceDeckId = null // the deck elected to stream fftBins (last claim wins)
 
     const panel = () => {
         emitter.emit('panel: ensure')
@@ -67,6 +105,8 @@ export default function remoteStore(state, emitter) {
         bpm: typeof window.bpm === 'number' ? window.bpm : 30
     })
 
+    const fftState = () => ({ ...fftBus.state(), sourceDeckId: fftSourceDeckId })
+
     const snapshotMsg = () => {
         const p = panel()
         const c = cm()
@@ -80,9 +120,19 @@ export default function remoteStore(state, emitter) {
             showCode: state.showCode !== false,
             globals: globals(),
             lbClean: !!(p && p.lb.clean),
-            canPreview: !!(p && p.host.captureStream())
+            canPreview: !!(p && p.host.captureStream()),
+            fft: fftState(),
+            display: { on: isDisplay(), tier: currentTier() }
         }
     }
+
+    // fft source changes (bus arbitration or deck election) reach every deck
+    fftBus.onChange(() => cast({ t: 'fftState', ...fftState() }))
+    // a.setSmooth()/setCutoff()/setScale()/setBins() on this renderer must
+    // reach the deck that owns the mic so its Meyda pipeline stays in sync
+    fftBus.onSettingCall((fn, value) => {
+        if (fftSourceDeckId) to(fftSourceDeckId, { t: 'fftCtl', fn, value })
+    })
 
     // ---- outgoing state: debounced full-text pushes
 
@@ -214,6 +264,31 @@ export default function remoteStore(state, emitter) {
                 if (msg.on) fftSubs.add(from)
                 else fftSubs.delete(from)
                 syncFftTimer()
+                return
+            case 'fftPub': {
+                // this deck claims (or releases) the "I stream the FFT" role —
+                // last claim wins; the displaced deck sees fftState and stops
+                const prev = fftSourceDeckId
+                if (msg.on) fftSourceDeckId = from
+                else if (fftSourceDeckId === from) fftSourceDeckId = null
+                if (prev !== fftSourceDeckId) cast({ t: 'fftState', ...fftState() })
+                return
+            }
+            case 'fftBins':
+                if (from === fftSourceDeckId) fftBus.pushDeckBins(msg.bins)
+                return
+            case 'fftSource':
+                fftBus.setMode(String(msg.source)) // bus onChange casts fftState
+                return
+            case 'displayTier':
+                if (isDisplay() && applyTier(String(msg.tier))) {
+                    cast({ t: 'display', on: true, tier: currentTier() })
+                }
+                return
+            case 'diag':
+                if (msg.on) diagSubs.add(from)
+                else diagSubs.delete(from)
+                syncDiagTimer()
                 return
             case 'sceneSave':
                 p.saveScene(msg.i | 0)
@@ -487,11 +562,26 @@ export default function remoteStore(state, emitter) {
                 const audio = p && p.host.audio ? p.host.audio() : null
                 const fft = audio && audio.fft
                 if (!fft || !fft.length) return
-                cast({ t: 'fftFrame', bins: Array.from(fft.slice(0, 8), (v) => +(+v).toFixed(3)) })
+                // the bus writes deck/native bins into this same a.fft, so
+                // every deck's meter shows whichever source is live
+                cast({ t: 'fftFrame', bins: Array.from(fft.slice(0, 8), (v) => +(+v).toFixed(3)), src: fftBus.state().active })
             }, FFT_INTERVAL_MS)
         } else if (!fftSubs.size && fftTimer) {
             clearInterval(fftTimer)
             fftTimer = null
+        }
+    }
+
+    // 1 Hz device diagnostics for the deck OSD (targeted, subscribers only)
+    const syncDiagTimer = () => {
+        if (diagSubs.size && !diagTimer) {
+            diagTimer = setInterval(() => {
+                const d = collectDiag()
+                diagSubs.forEach((id) => to(id, d))
+            }, 1000)
+        } else if (!diagSubs.size && diagTimer) {
+            clearInterval(diagTimer)
+            diagTimer = null
         }
     }
 
@@ -556,6 +646,12 @@ export default function remoteStore(state, emitter) {
                 state.vjRemote.decks = Math.max(0, state.vjRemote.decks - 1)
                 fftSubs.delete(msg.id)
                 syncFftTimer()
+                diagSubs.delete(msg.id)
+                syncDiagTimer()
+                if (fftSourceDeckId === msg.id) {
+                    fftSourceDeckId = null // bus staleness falls back per arbitration
+                    cast({ t: 'fftState', ...fftState() })
+                }
                 stopRtc(msg.id)
                 frameSubs.delete(msg.id)
                 frameReq.delete(msg.id)
@@ -565,6 +661,18 @@ export default function remoteStore(state, emitter) {
             } else if (msg.t === 'error' && msg.code === 'replaced') {
                 // another host tab took the room over — newest wins, stand down
                 closedByReplace = true
+                // …except a TV going silently dark looks like a crash: say
+                // what happened and let the remote's OK key reclaim the room
+                if (isDisplay()) showReplacedOverlay()
+            } else if (msg.t === 'error' && isDisplay() &&
+                (msg.code === 'revoked' || msg.code === 'unauthorized' || msg.code === 'bad-token' || msg.code === 'bad-room')) {
+                // this display's credential is gone — wipe it and re-pair
+                stopped = true
+                try {
+                    localStorage.removeItem(DISPLAY_ROOM_KEY)
+                    localStorage.removeItem(DISPLAY_TOKEN_KEY)
+                } catch (e) { /* private mode */ }
+                startDisplayPairing()
             }
         }
         ws.onclose = () => {
@@ -575,13 +683,36 @@ export default function remoteStore(state, emitter) {
     }
 
     const retry = () => {
-        if (closedByReplace) return
+        if (closedByReplace || stopped) return
         const delay = backoff + Math.random() * 500
         backoff = Math.min(backoff * 2, 60000) // no relay deployed -> quiet slow retries
         setTimeout(connect, delay)
     }
 
-    connect()
+    // display with no credential: run the short-code pairing overlay; the
+    // relay hands over {room, token} once a deck approves the code
+    const startDisplayPairing = () => {
+        import('../views/display-pair.js').then((m) => {
+            m.startPairing({
+                onPaired: (creds) => {
+                    room = creds.room
+                    token = creds.token
+                    state.vjRemote.room = room
+                    state.vjRemote.token = token
+                    try {
+                        localStorage.setItem(DISPLAY_ROOM_KEY, room)
+                        localStorage.setItem(DISPLAY_TOKEN_KEY, token)
+                    } catch (e) { /* private mode */ }
+                    stopped = false
+                    backoff = 1000
+                    connect()
+                }
+            })
+        }).catch((e) => console.warn('display pairing unavailable', e))
+    }
+
+    if (needsPairing) startDisplayPairing()
+    else connect()
 
     // targeted send for other stores (WebRTC preview signaling)
     emitter.on('vj-remote: send', (deckId, msg) => to(deckId, msg))

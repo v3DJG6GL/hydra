@@ -1,10 +1,11 @@
 import repl from './repl-v2.js'
+import { isDisplay } from '../lib/display-mode.js'
 // console.log('ENVIRONMENT IS', process.env.NODE_ENV)
 
 export default function store(state, emitter) {
   state.showInfo = false
   state.showUI = true
-  state.showCode = true
+  state.showCode = !isDisplay() // TV/projector kiosks boot to bare visuals
   state.showExtensions = false
   state.errorMessage = ''
   state.isError = false

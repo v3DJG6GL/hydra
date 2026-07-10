@@ -7,6 +7,7 @@ import editorStore from './src/stores/editor-store.js'
 import galleryStore from './src/stores/gallery-store.js'
 import panelStore from './src/stores/panel-store.js'
 import remoteStore from './src/stores/remote-store.js'
+import displayStore from './src/lib/display-mode.js'
 
 import mainView from './src/views/main.js'
 
@@ -17,6 +18,7 @@ app.use(editorStore)
 app.use(galleryStore)
 app.use(panelStore)
 app.use(remoteStore)
+app.use(displayStore)
 
 app.use(languageStore)
 app.use(extensionStore)

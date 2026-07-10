@@ -896,6 +896,25 @@ export default class VJPanel {
             this.openAudioMenu(d, this.hostRootFor(fft), fft)
         }
         rail.appendChild(fft)
+
+        // this deck's microphone as the renderer's FFT source — for displays
+        // without a usable mic (TVs, projector booths). Lit while this deck
+        // is the elected source; another deck claiming it unlights us.
+        if (this.host.remote && this.host.fftCapture) {
+            const isSrc = this.host.isFftSource()
+            const mic = el(d, 'button', 'vj-fft' + (isSrc ? ' vj-on' : ''), '∿ MIC')
+            if (!this.host.fftCapture.supported()) {
+                mic.disabled = true
+                mic.title = this.tr('panel.mic-insecure',
+                    'streaming this device’s mic needs a secure context (https or localhost)')
+            } else {
+                mic.title = this.tr('panel.mic',
+                    'stream THIS device’s microphone to the renderer as its a.fft source — right-click the FFT button for source/settings')
+                mic.onclick = () => { this.host.toggleFftPub().then(() => this.renderAll()) }
+            }
+            rail.appendChild(mic)
+        }
+
         if (this.host.remote && this.fftShown) rail.appendChild(this.renderFftMeter(d))
 
         // stage view: drop the code/console/toolbar overlay, keep visuals + deck.
@@ -1107,7 +1126,9 @@ export default class VJPanel {
         return rowEl
     }
 
-    // FFT button right-click: add audio-setting rows the sketch doesn't have yet
+    // FFT button right-click: audio-setting rows the sketch doesn't have yet,
+    // plus (on remote decks against a caps-aware relay) the a.fft source
+    // selector and the display quality tier
     openAudioMenu(d, root, anchor) {
         const stmts = (this.model && this.model.statements) || []
         const items = []
@@ -1118,9 +1139,41 @@ export default class VJPanel {
                 fn: () => this.apply({ from: 0, to: 0, text: `a.${fn}(${fmtNumber(meta.def)})\n` })
             })
         })
+        const fftState = this.host.remote ? this.host.fftState : null
+        if (fftState && this.host.caps && this.host.caps.includes('fft2')) {
+            const sources = [
+                ['auto', this.tr('panel.fft-src-auto', 'source: auto (deck → tv → renderer)')],
+                ['deck', this.tr('panel.fft-src-deck', 'source: a deck’s mic (∿ MIC)')],
+                ['native', this.tr('panel.fft-src-native', 'source: the display’s own mic')],
+                ['local', this.tr('panel.fft-src-local', 'source: the renderer’s mic')],
+                ['off', this.tr('panel.fft-src-off', 'source: off')]
+            ]
+            items.push({ separator: true })
+            sources.forEach(([mode, label]) => {
+                items.push({
+                    label: (fftState.mode === mode ? '● ' : '○ ') + label,
+                    fn: () => this.host.setFftSource(mode)
+                })
+            })
+        }
+        const disp = this.host.remote ? this.host.displayInfo : null
+        if (disp && disp.on) {
+            items.push({ separator: true })
+            ;['540', '720', '1080', 'native'].forEach((tier) => {
+                items.push({
+                    label: (disp.tier === tier ? '● ' : '○ ') +
+                        this.tr('panel.tier', 'display quality: ') + (tier === 'native' ? 'native' : tier + 'p'),
+                    fn: () => this.host.setDisplayTier(tier)
+                })
+            })
+        }
         if (!items.length) return
         this.openPopover(d, root, anchor, (pop) => {
             items.forEach((item) => {
+                if (item.separator) {
+                    pop.appendChild(el(d, 'div', 'vj-menu-sep'))
+                    return
+                }
                 const b = el(d, 'button', 'vj-menu-item', item.label)
                 b.onclick = (e) => {
                     e.stopPropagation()
