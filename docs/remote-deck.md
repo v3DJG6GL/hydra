@@ -146,6 +146,28 @@ right-click does on the desktop lives behind a **long-press** on touch:
 - **Hold a module's title bar (~⅓s)** to lift it for reorder; a plain
   sideways drag on the title bar pans the chain instead.
 
+## MIDI control
+
+Web MIDI needs a secure context: WAN/https decks, or the renderer machine
+itself. Right-click (long-press on touch) the thing you want on hardware:
+
+- **Faders** — *midi learn (move a knob)* binds the next CC that changes.
+  Knobs sweep the mapping's **range**, which starts as a guess from the
+  value at learn time (0 to 2× it); *midi range…* in the same menu shows
+  the active range and takes any min/max you like — including negatives
+  and values far beyond the on-screen fader. A hand-set range sticks even
+  if you re-learn the knob later.
+- **Buttons work too** — on a fader, *midi button: toggle* flips the param
+  between the range's min and max on every hit, *midi button: hold* jumps
+  it to max while the pad is held and back to min on release (release
+  works with real note-offs and with vel-0 note-ons, both conventions).
+- **Scene pads** — *midi learn* on a scene slot recalls it on a pad hit.
+- **HUSH** — right-click it and hit a pad: panic button on hardware.
+
+Mappings persist per browser and deactivate automatically when the sketch
+structure changes underneath them (they're keyed to the function the
+param belongs to).
+
 ## Live preview
 
 The ◉ LIVE button on the deck streams the renderer's canvas. Compressed

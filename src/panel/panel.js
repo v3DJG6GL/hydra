@@ -825,6 +825,20 @@ export default class VJPanel {
         const hush = el(d, 'button', 'vj-hush', 'HUSH')
         hush.title = this.tr('panel.hush', 'stop all outputs (code stays)')
         hush.onclick = () => this.host.run('hush()')
+        hush.oncontextmenu = (e) => {
+            e.preventDefault()
+            if (!this.midi.available) return
+            const items = []
+            if (this.midi.isLearningAction('hush')) {
+                items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
+            } else {
+                items.push({ label: this.tr('panel.midi-learn-pad', 'midi learn (hit a pad or key)'), fn: () => this.midi.startLearnAction('hush') })
+            }
+            if (this.midi.isActionMapped('hush')) {
+                items.push({ label: this.tr('panel.midi-unlearn', 'midi unlearn'), fn: () => this.midi.unlearnAction('hush'), danger: true })
+            }
+            this.openItemsMenu(d, this.hostRootFor(hush), hush, items)
+        }
         rail.appendChild(hush)
 
         const shuf = el(d, 'button', 'vj-railbtn')
@@ -1522,10 +1536,15 @@ export default class VJPanel {
                 items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
             } else {
                 items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob)'), fn: () => this.midi.startLearn(arg.path) })
+                items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: toggle (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'toggle') })
+                items.push({ label: this.tr('panel.midi-learn-push', 'midi button: hold (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'push') })
             }
             if (this.midi.isMapped(arg.path)) {
+                const m = this.midi.mappings.params[arg.path]
                 items.push({
-                    label: this.tr('panel.midi-range', 'midi range…'),
+                    // surface the active range — hardware sweeps the whole
+                    // of it, and this is where to widen it
+                    label: this.tr('panel.midi-range', 'midi range…') + ` (${fmtNumber(m.min)} to ${fmtNumber(m.max)})`,
                     keepOpen: true,
                     fn: () => this.openMidiRange(d, root, anchor, arg)
                 })
@@ -1546,6 +1565,10 @@ export default class VJPanel {
                 this.apply({ from: arg.range[0], to: arg.range[1], text: `() => mouse.x / width * ${scale}` })
             }
         })
+        this.openItemsMenu(d, root, anchor, items)
+    }
+
+    openItemsMenu(d, root, anchor, items) {
         this.openPopover(d, root, anchor, (pop) => {
             items.forEach((item) => {
                 const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : ''), item.label)
