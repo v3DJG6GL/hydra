@@ -217,7 +217,7 @@ export default class RemoteHost {
                 return
             case 'frame':
                 // only while subscribed — a frame still in flight after the
-                // RTC upgrade must not flip the pane back to a frozen JPEG
+                // RTC upgrade must not flip the pane back to a frozen still
                 if (this._previewImg && this._framesMode) {
                     this._previewImg.src = msg.data
                     this._setPreviewMode('frames')
@@ -322,7 +322,7 @@ export default class RemoteHost {
     }
 
     // ------------------------------------------------------------ preview
-    // Relayed JPEG frames start immediately — they traverse anything the
+    // Relayed frames start immediately — they traverse anything the
     // control channel traverses, so the preview works wherever the deck
     // works (WAN included). WebRTC negotiates in parallel (signaled through
     // the relay; STUN only, no TURN) and the video takes over the moment

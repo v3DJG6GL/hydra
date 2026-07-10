@@ -129,8 +129,9 @@ right-click does on the desktop lives behind a **long-press** on touch:
 
 ## Live preview
 
-The ◉ LIVE button on the deck streams the renderer's canvas. JPEG frames
-over the relay (~3fps) start immediately — they travel the same path as
+The ◉ LIVE button on the deck streams the renderer's canvas. Compressed
+frames over the relay (~3fps; WebP, or JPEG on renderers whose browser
+can't encode WebP) start immediately — they travel the same path as
 the controls, so the preview works wherever the deck works, WAN included.
 In parallel the deck negotiates a WebRTC peer connection (signaled through
 the relay; STUN handles most NATs) and switches to the smooth video the

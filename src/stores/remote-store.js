@@ -259,7 +259,18 @@ export default function remoteStore(state, emitter) {
     }
 
     // ---- live preview: hydra's captureStream over WebRTC per deck, with
-    // relayed JPEG frames (getScreenImage, ~3fps) as the dependable fallback
+    // relayed frames (getScreenImage, ~3fps) as the dependable fallback
+
+    // WebP is ~30% smaller than JPEG at like quality and every deck browser
+    // decodes it — but not every host encodes it (Safari): toDataURL falls
+    // back to PNG silently there, hence the one-time capability probe
+    const frameMime = (() => {
+        try {
+            const c = document.createElement('canvas')
+            c.width = c.height = 2
+            return c.toDataURL('image/webp').startsWith('data:image/webp') ? 'image/webp' : 'image/jpeg'
+        } catch (e) { return 'image/jpeg' }
+    })()
 
     const pcs = new Map() // deckId -> RTCPeerConnection
     const frameSubs = new Set()
@@ -343,7 +354,7 @@ export default function remoteStore(state, emitter) {
                         c.width = w
                         c.height = Math.max(1, Math.round(w * img.height / img.width))
                         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
-                        const data = c.toDataURL('image/jpeg', 0.55)
+                        const data = c.toDataURL(frameMime, 0.55)
                         frameSubs.forEach((id) => to(id, { t: 'frame', data }))
                     } catch (e) { /* canvas hiccup — drop the frame */ }
                     URL.revokeObjectURL(url)
