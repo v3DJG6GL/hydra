@@ -54,9 +54,20 @@ the on-screen settings (hold BACK).
    remote-deck.md): all-LAN or all-WAN, never mix.
 3. SAVE & OPEN KIOSK. The page boots to the pairing screen: a short code
    like `ABCD-2345`.
-4. On a paired deck: toprail QR button → **LINK A TV / DISPLAY** → type the
-   code → APPROVE. (Optionally tick *require OK on the TV* — then the TV
-   asks for one OK press before finishing.)
+4. Approve the code from a **connected deck** — a deck that already
+   controls your visuals, i.e. `deck.html` opened through its
+   `#room=…&token=…` pairing link (or the installed deck PWA). There:
+   toprail QR button → **LINK A TV / DISPLAY** → type the code →
+   APPROVE. (Optionally tick *require OK on the TV* — the TV then asks
+   for one OK press before finishing.)
+
+   Opening a bare `/deck.html` shows only the deck-pairing screen, with
+   no code entry — that is deliberate: approving a display takes the
+   room's authority, otherwise anyone could adopt your TV. No deck yet?
+   On the machine/browser that runs the visuals, open `/deck.html` — it
+   offers OPEN THE DECK IN THIS WINDOW plus a QR + copyable link to
+   enroll a tablet or laptop. From a working deck, the same QR-button
+   overlay (*PAIR ANOTHER DEVICE*) enrolls more controllers.
 5. Done. The TV holds its own revocable display credential in localStorage;
    the deck's QR overlay lists paired displays with UNPAIR/rename.
 
