@@ -33,6 +33,19 @@
 
 .vj-panel *, .vj-panel *::before, .vj-panel *::after { box-sizing: border-box; }
 
+/* a performance surface: long-presses must not select silkscreen labels or
+   pop image-save sheets, and double-taps on pads must not zoom the page */
+.vj-panel {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.vj-panel input, .vj-panel textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+.vj-panel, .vj-panel button, .vj-panel select { touch-action: manipulation; }
+
 .vj-panel button, .vj-panel input, .vj-panel select {
   font: inherit;
   color: inherit;
@@ -67,12 +80,19 @@
   position: relative;
   width: 100vw;
   height: 100vh;
+  height: 100dvh; /* mobile: track the browser chrome, don't hide under it */
   display: flex;
   flex-direction: column;
   border-top: none;
+  overflow-x: hidden;
 }
 
-.vj-popup-body { margin: 0; background: #0a0b0d; overflow: hidden; }
+.vj-popup-body {
+  margin: 0;
+  background: #0a0b0d;
+  overflow: hidden;
+  overscroll-behavior: none; /* no pull-to-refresh mid-set */
+}
 
 .vj-orphan-note {
   display: none;
@@ -112,6 +132,10 @@
 }
 
 .vj-spacer { flex: 1; }
+
+/* forced wrap point before the monitor toggles (FFT/CODE/LIVE) — inert on
+   wide rails, becomes a line break on phone widths */
+.vj-railbreak { display: none; }
 
 .vj-hush {
   border: 1px solid var(--vj-line);
@@ -153,7 +177,7 @@
 .vj-preview img {
   display: block;
   width: 100%;
-  max-height: 220px;
+  max-height: min(220px, 35vh);
   object-fit: contain;
   background: #000;
 }
@@ -501,7 +525,9 @@
   touch-action: none;
 }
 
-.vj-chip-src > .vj-chip-head { cursor: default; }
+/* source heads never drag-reorder — leave them as native scroll surface
+   so a touch can always pan the chain from the first chip */
+.vj-chip-src > .vj-chip-head { cursor: default; touch-action: auto; }
 
 .vj-chip-name {
   font-weight: 700;
@@ -595,9 +621,14 @@
   border: 1px solid var(--vj-line);
   border-radius: 2px;
   cursor: ew-resize;
-  touch-action: none;
+  /* pan-y, not none: a vertical swipe that lands on a fader must still
+     scroll the page (the body is mostly faders); horizontal drags are ours */
+  touch-action: pan-y;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
 }
+
+/* pull-away fine adjust engaged (finger far above/below the track) */
+.vj-fader.vj-fine { border-color: var(--vj-o3); }
 
 .vj-fader-fill {
   position: absolute;
@@ -827,6 +858,7 @@
   position: absolute;
   z-index: 60;
   min-width: 130px;
+  max-width: calc(100vw - 12px);
   background: var(--vj-module);
   border: 1px solid var(--vj-line);
   border-radius: 3px;
@@ -847,7 +879,7 @@
 .vj-menu-item:hover { background: var(--vj-chassis); }
 .vj-menu-item.vj-danger:hover { background: var(--vj-armed); color: #fff; }
 
-.vj-palette { width: 300px; }
+.vj-palette { width: min(300px, calc(100vw - 12px)); }
 
 .vj-palette-search {
   width: 100%;
@@ -1104,19 +1136,33 @@
 
 @media (pointer: coarse) {
   .vj-fader { height: 26px; }
+  /* .vj-bind .vj-fader (0,2,0) outguns the plain rule — repeat it here or
+     bind-row faders stay 12px tall on phones */
+  .vj-bind .vj-fader { height: 22px; }
   .vj-pp { width: 30px; height: 30px; margin-top: 4px; }
-  .vj-chip-menubtn { padding: 6px 10px; }
+  .vj-chip-menubtn { padding: 6px 10px; min-width: 40px; min-height: 34px; }
   .vj-menu-item { padding: 10px 12px; }
   /* remote decks are primarily touch surfaces — everything tappable ≥ ~34px */
   .vj-railbtn { min-width: 40px; min-height: 34px; }
   .vj-hush, .vj-fft { min-height: 34px; padding-left: 12px; padding-right: 12px; }
   .vj-scene { min-width: 64px; min-height: 44px; }
-  .vj-scenetool { min-width: 38px; min-height: 34px; }
+  .vj-scenetool { min-width: 44px; min-height: 34px; }
   .vj-seq-cell, .vj-seq-add { min-width: 34px; min-height: 34px; }
   .vj-refselect { min-height: 32px; }
   .vj-source-remove, .vj-strip-kill, .vj-audio-unbind { min-width: 34px; min-height: 30px; }
-  .vj-expr-freeze { min-width: 34px; }
+  .vj-expr-freeze { min-width: 34px; min-height: 30px; }
   .vj-newchain { min-height: 36px; }
+  /* tap-to-type readouts get a real target */
+  .vj-value { min-height: 26px; display: inline-flex; align-items: center; justify-content: flex-end; }
+  /* 16px text fields: anything smaller makes iOS zoom the page on focus */
+  .vj-value-input, .vj-palette-search, .vj-src-url, .vj-rangeform input,
+  .vj-pair-form input, .vj-pair-url { font-size: 16px; }
+  .vj-value-input { width: 84px; }
+}
+
+/* no hover on touch: controls that fade in on :hover must just be there */
+@media (hover: none) {
+  .vj-strip-kill { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1126,6 +1172,37 @@
 @media (max-width: 640px) {
   #vj-dock { max-height: 60vh; }
   .vj-brand { display: none; }
+
+  /* two-tier rail: transport (hush/shuffle/dice/undo/redo) on top, the
+     monitor toggles below — every control stays visible and one tap away */
+  .vj-toprail { flex-wrap: wrap; gap: 4px 8px; padding: 6px 8px; }
+  .vj-toprail .vj-railbreak { display: block; flex: 1 0 100%; height: 0; }
+
+  /* scene bank becomes a pad grid: 4 per row, all 8 visible, no scrolling.
+     the tools drop into their own slim row underneath */
+  .vj-scenes { flex-wrap: wrap; gap: 6px; padding: 8px; }
+  .vj-scene {
+    flex: 1 1 calc(25% - 5px);
+    width: auto;
+    height: auto;
+    aspect-ratio: 16 / 10;
+    /* a faint module face so empty pads read as pads, not floating digits */
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .vj-scenes-tools {
+    flex-direction: row;
+    flex: 1 0 100%;
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
+
+/* landscape phones: keep the strip a single row but stop the tools column
+   from inflating it (three stacked touch targets ≈ 110px of dead height) */
+@media (max-height: 520px) {
+  .vj-scenes-tools { flex-direction: row; }
+  .vj-preview video,
+  .vj-preview img { max-height: 34vh; }
 }
 
 /* ---------- remote deck ---------- */
@@ -1159,15 +1236,24 @@
 .vj-remote-body {
   margin: 0;
   height: 100vh;
+  height: 100dvh; /* phones: 100vh hides the deck bottom under the url bar */
   display: flex;
   flex-direction: column;
   background: #0b0b10;
+  overscroll-behavior: none; /* a pull-to-refresh would reload the deck mid-set */
+  padding-top: env(safe-area-inset-top, 0);
+  padding-left: env(safe-area-inset-left, 0);
+  padding-right: env(safe-area-inset-right, 0);
 }
 .vj-remote-body #vj-remote-root {
   flex: 1;
   min-height: 0;
   height: auto;
   overflow-y: auto;
+  /* overflow-y alone computes overflow-x to auto — a too-wide toprail
+     would pan the entire deck sideways */
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
@@ -1187,7 +1273,7 @@
 
 .vj-remote-toasts {
   position: fixed;
-  bottom: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 70;
@@ -1213,22 +1299,27 @@
   to { opacity: 1; transform: none; }
 }
 
-/* pairing screen */
+/* pairing screen — also used as the "pair another device" overlay on a
+   running deck, so it must stack above the chips (which carry z-index: 1) */
 .vj-remote-pair {
   position: fixed;
   inset: 0;
+  z-index: 90;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
-  align-items: center;
-  justify-content: center;
   background: #0b0b10;
   color: #ccc;
   font-family: 'Chivo', sans-serif;
 }
 .vj-remote-pair[hidden] { display: none; }
 .vj-pair-box {
+  /* auto margins center the box but stay reachable when it overflows a
+     small screen (justify-content: center clips the left edge instead) */
+  margin: auto;
+  width: 100%;
   max-width: 440px;
-  padding: 24px;
+  padding: 24px 16px;
 }
 .vj-pair-box h1 {
   font-size: 15px;
@@ -1262,11 +1353,17 @@
   font-family: inherit;
   font-size: 13px;
   padding: 10px 16px;
+  min-height: 44px;
   cursor: pointer;
 }
-.vj-pair-form { display: flex; gap: 8px; margin-top: 12px; }
+.vj-pair-connect {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+.vj-pair-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .vj-pair-form input {
-  flex: 1;
+  flex: 1 1 130px;
   min-width: 0;
   background: #16161f;
   border: 1px solid #333;
@@ -1275,3 +1372,4 @@
   font-size: 12px;
   padding: 8px;
 }
+.vj-pair-form button { flex: 1 0 100%; }
