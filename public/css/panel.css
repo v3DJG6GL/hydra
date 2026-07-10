@@ -1246,22 +1246,27 @@
   to { opacity: 1; transform: none; }
 }
 
-/* pairing screen */
+/* pairing screen — also used as the "pair another device" overlay on a
+   running deck, so it must stack above the chips (which carry z-index: 1) */
 .vj-remote-pair {
   position: fixed;
   inset: 0;
+  z-index: 90;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
-  align-items: center;
-  justify-content: center;
   background: #0b0b10;
   color: #ccc;
   font-family: 'Chivo', sans-serif;
 }
 .vj-remote-pair[hidden] { display: none; }
 .vj-pair-box {
+  /* auto margins center the box but stay reachable when it overflows a
+     small screen (justify-content: center clips the left edge instead) */
+  margin: auto;
+  width: 100%;
   max-width: 440px;
-  padding: 24px;
+  padding: 24px 16px;
 }
 .vj-pair-box h1 {
   font-size: 15px;
@@ -1295,11 +1300,17 @@
   font-family: inherit;
   font-size: 13px;
   padding: 10px 16px;
+  min-height: 44px;
   cursor: pointer;
 }
-.vj-pair-form { display: flex; gap: 8px; margin-top: 12px; }
+.vj-pair-connect {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+.vj-pair-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .vj-pair-form input {
-  flex: 1;
+  flex: 1 1 130px;
   min-width: 0;
   background: #16161f;
   border: 1px solid #333;
@@ -1308,3 +1319,4 @@
   font-size: 12px;
   padding: 8px;
 }
+.vj-pair-form button { flex: 1 0 100%; }
