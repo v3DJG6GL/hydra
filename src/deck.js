@@ -29,22 +29,94 @@ if (navigator.wakeLock) {
 
 const creds = parseDeckHash(location.hash)
 
+// ---- pairing screens: "module face" — the pair page is a piece of deck
+// hardware. Chassis + silkscreen labels, the QR in a patch-bay frame with
+// the four output-tally colors as corner brackets, and the projector
+// warning as a hazard-tape strip along the module's base.
+
+const h = (tag, cls, text) => {
+    const n = document.createElement(tag)
+    if (cls) n.className = cls
+    if (text !== undefined) n.textContent = text
+    return n
+}
+
+// QR bay: white tile inside tally-colored corner brackets
+function qrBay(url) {
+    const bay = h('div', 'vj-pair-qrbay')
+    const frame = h('div', 'vj-pair-qrframe')
+    const tile = h('div', 'vj-pair-qrtile')
+    tile.id = 'vj-pair-qr'
+    frame.appendChild(tile)
+    for (let i = 0; i < 4; i++) frame.appendChild(h('i'))
+    bay.appendChild(frame)
+    bay.appendChild(h('div', 'vj-pair-silk', 'SCAN ON THE DECK DEVICE'))
+    renderQr(tile, url)
+    return bay
+}
+
+function legacyCopy(input) {
+    try {
+        input.select()
+        return document.execCommand('copy')
+    } catch (e) { return false }
+}
+
+// mono URL field with an attached COPY button (clipboard API where the
+// context is secure, hidden-selection execCommand on plain LAN http)
+function linkRow(url) {
+    const row = h('div', 'vj-pair-linkrow')
+    const input = h('input', 'vj-pair-url')
+    input.readOnly = true
+    input.value = url
+    input.onclick = () => input.select()
+    const btn = h('button', 'vj-pair-copy', 'COPY')
+    const done = (ok) => {
+        btn.textContent = ok ? 'COPIED' : 'COPY FAILED'
+        btn.classList.toggle('vj-pair-copied', ok)
+        clearTimeout(btn._reset)
+        btn._reset = setTimeout(() => {
+            btn.textContent = 'COPY'
+            btn.classList.remove('vj-pair-copied')
+        }, 1400)
+    }
+    btn.onclick = () => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(() => done(true), () => done(legacyCopy(input)))
+        } else {
+            done(legacyCopy(input))
+        }
+    }
+    row.append(input, btn)
+    return row
+}
+
+// one module for every pairing surface: a bay (QR or the manual form) next
+// to the copy + actions column, hazard tape underneath
+function pairModule({ error, bay, eyebrow, title, explainer, children = [] }) {
+    const mod = h('div', 'vj-pair-module')
+    if (error) mod.appendChild(h('div', 'vj-pair-errorbar', '⚠ ' + error))
+    const body = h('div', 'vj-pair-body')
+    body.appendChild(bay)
+    const ctrl = h('div', 'vj-pair-ctrl')
+    ctrl.appendChild(h('div', 'vj-pair-eyebrow', eyebrow))
+    ctrl.appendChild(h('h1', 'vj-pair-title', title))
+    ctrl.appendChild(h('p', 'vj-pair-expl', explainer))
+    children.forEach((c) => ctrl.appendChild(c))
+    body.appendChild(ctrl)
+    mod.appendChild(body)
+    const hz = h('div', 'vj-pair-hazard')
+    hz.appendChild(h('span', 'vj-pair-hazard-glyph', '⚠'))
+    hz.appendChild(h('span', null, 'KEEP THIS PAGE OFF THE PROJECTOR — THE LINK CARRIES FULL CONTROL'))
+    mod.appendChild(hz)
+    return mod
+}
+
 function showPairScreen(error) {
     statusEl.hidden = true
     rootEl.hidden = true
     pairEl.hidden = false
     pairEl.textContent = ''
-    const box = document.createElement('div')
-    box.className = 'vj-pair-box'
-    const h = document.createElement('h1')
-    h.textContent = 'HYDRA VJ DECK — pair with a renderer'
-    box.appendChild(h)
-    if (error) {
-        const e = document.createElement('p')
-        e.className = 'vj-pair-error'
-        e.textContent = error
-        box.appendChild(e)
-    }
 
     // same browser profile as a renderer tab? offer its pairing directly
     let localRoom = null
@@ -53,29 +125,22 @@ function showPairScreen(error) {
         localRoom = localStorage.getItem('hydra-vj-room')
         localToken = localStorage.getItem('hydra-vj-token')
     } catch (e) { /* private mode */ }
+
+    const wrap = h('div', 'vj-pair-wrap')
+    const rail = h('div', 'vj-pair-rail')
+    rail.appendChild(h('span', 'vj-pair-brand', 'HYDRA VJ DECK'))
+    rail.appendChild(h('span', 'vj-pair-railsep', '/'))
+    rail.appendChild(h('span', 'vj-pair-railmode', 'PAIRING'))
+    if (localRoom) rail.appendChild(h('span', 'vj-pair-railroom', 'ROOM ' + localRoom.slice(0, 8)))
+    wrap.appendChild(rail)
+    const stage = h('div', 'vj-pair-stage')
+
+    let mod
     if (localRoom && localToken) {
-        const p = document.createElement('p')
-        p.textContent = 'This browser runs a hydra renderer. Its deck URL (open on the tablet/laptop, or scan below):'
-        box.appendChild(p)
         const url = deckUrl(location.origin, localRoom, localToken)
-        const qr = document.createElement('div')
-        qr.className = 'vj-pair-qr'
-        qr.id = 'vj-pair-qr'
-        box.appendChild(qr)
-        const link = document.createElement('input')
-        link.className = 'vj-pair-url'
-        link.readOnly = true
-        link.value = url
-        link.onclick = () => { link.select(); try { navigator.clipboard.writeText(url) } catch (e) {} }
-        box.appendChild(link)
-        const here = document.createElement('button')
-        here.className = 'vj-pair-connect'
-        here.textContent = 'open the deck in this window'
+        const here = h('button', 'vj-pair-btn', 'OPEN THE DECK IN THIS WINDOW')
         here.onclick = () => { location.hash = 'room=' + localRoom + '&token=' + localToken; location.reload() }
-        box.appendChild(here)
-        const rot = document.createElement('button')
-        rot.className = 'vj-pair-connect vj-pair-rotate'
-        rot.textContent = 'rotate pairing (log out all decks)'
+        const rot = h('button', 'vj-pair-btn vj-pair-danger', 'ROTATE PAIRING — LOG OUT ALL DECKS')
         rot.title = 'forget these credentials; the renderer generates fresh ones on its next reload'
         rot.onclick = () => {
             if (!confirm('Invalidate this pairing? Every connected deck loses control until re-paired, and the hydra tab must be reloaded.')) return
@@ -85,22 +150,23 @@ function showPairScreen(error) {
             } catch (e) { /* private mode */ }
             location.reload()
         }
-        box.appendChild(rot)
-        renderQr(qr, url)
+        mod = pairModule({
+            error,
+            bay: qrBay(url),
+            eyebrow: 'PAIR A DECK',
+            title: 'Control this renderer from a tablet or phone',
+            explainer: 'Open this link on the device that will run the deck — scan the code, or copy the link across. Anyone with the link has full control of the visuals.',
+            children: [linkRow(url), here, rot]
+        })
     } else {
-        const p = document.createElement('p')
-        p.textContent = 'No pairing found. On the machine that runs the hydra visuals, open ' +
-            location.origin + '/deck.html — it shows a QR code / link for this device. ' +
-            'Never show that page on the projector: the link carries full control of the renderer.'
-        box.appendChild(p)
-        const form = document.createElement('form')
-        form.className = 'vj-pair-form'
-        const room = document.createElement('input')
+        // no pairing on this device: manual entry takes the QR bay's place
+        const bay = h('div', 'vj-pair-qrbay')
+        const form = h('form', 'vj-pair-form')
+        const room = h('input', 'vj-pair-in')
         room.placeholder = 'room'
-        const token = document.createElement('input')
+        const token = h('input', 'vj-pair-in')
         token.placeholder = 'token'
-        const go = document.createElement('button')
-        go.textContent = 'connect'
+        const go = h('button', 'vj-pair-btn', 'CONNECT')
         form.append(room, token, go)
         form.onsubmit = (e) => {
             e.preventDefault()
@@ -108,12 +174,22 @@ function showPairScreen(error) {
             location.hash = 'room=' + room.value.trim() + '&token=' + token.value.trim()
             location.reload()
         }
-        box.appendChild(form)
+        bay.appendChild(form)
+        bay.appendChild(h('div', 'vj-pair-silk', 'ENTER THE PAIRING BY HAND'))
+        mod = pairModule({
+            error,
+            bay,
+            eyebrow: 'PAIR A DECK',
+            title: 'No pairing on this device yet',
+            explainer: 'On the machine that runs the hydra visuals, open ' + location.origin +
+                '/deck.html — it shows a QR code and link for this device. Or type the room and token by hand.'
+        })
     }
-    pairEl.appendChild(box)
+    stage.appendChild(mod)
+    wrap.appendChild(stage)
+    pairEl.appendChild(wrap)
 }
 
-// QR placeholder until the pairing milestone wires a real encoder
 function renderQr(el, url) {
     import('./panel/qr.js')
         .then((m) => m.drawQr(el, url))
@@ -131,35 +207,21 @@ function boot({ room, token }) {
     const host = new RemoteHost({ url: relayUrl(), room, token })
     // "pair another device": this deck shows its own pairing as a QR overlay
     host.requestPairUi = () => {
-        const overlay = document.createElement('div')
-        overlay.className = 'vj-remote-pair'
-        const box = document.createElement('div')
-        box.className = 'vj-pair-box'
-        const h = document.createElement('h1')
-        h.textContent = 'pair another device'
-        box.appendChild(h)
-        const p = document.createElement('p')
-        p.textContent = 'Scan on the new device. The link carries full control of the renderer — keep it off the projector.'
-        box.appendChild(p)
+        const overlay = h('div', 'vj-remote-pair')
         const url = deckUrl(location.origin, room, token)
-        const qr = document.createElement('div')
-        qr.className = 'vj-pair-qr'
-        box.appendChild(qr)
-        const link = document.createElement('input')
-        link.className = 'vj-pair-url'
-        link.readOnly = true
-        link.value = url
-        link.onclick = () => { link.select(); try { navigator.clipboard.writeText(url) } catch (e) {} }
-        box.appendChild(link)
-        const close = document.createElement('button')
-        close.className = 'vj-pair-connect'
-        close.textContent = 'close'
+        const close = h('button', 'vj-pair-btn', 'CLOSE')
         close.onclick = () => overlay.remove()
-        box.appendChild(close)
-        overlay.appendChild(box)
-        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove() }
+        const stage = h('div', 'vj-pair-stage')
+        stage.appendChild(pairModule({
+            bay: qrBay(url),
+            eyebrow: 'PAIR ANOTHER DEVICE',
+            title: 'Enroll one more controller',
+            explainer: 'Scan on the new device, or copy the link across — it gets the same full control of the renderer as this deck.',
+            children: [linkRow(url), close]
+        }))
+        overlay.appendChild(stage)
+        overlay.onclick = (e) => { if (e.target === overlay || e.target === stage) overlay.remove() }
         document.body.appendChild(overlay)
-        renderQr(qr, url)
     }
     const panel = new VJPanel(state, () => {}, host)
     panel.remoteRoot = rootEl
