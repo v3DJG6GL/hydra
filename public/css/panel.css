@@ -33,6 +33,19 @@
 
 .vj-panel *, .vj-panel *::before, .vj-panel *::after { box-sizing: border-box; }
 
+/* a performance surface: long-presses must not select silkscreen labels or
+   pop image-save sheets, and double-taps on pads must not zoom the page */
+.vj-panel {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.vj-panel input, .vj-panel textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+.vj-panel, .vj-panel button, .vj-panel select { touch-action: manipulation; }
+
 .vj-panel button, .vj-panel input, .vj-panel select {
   font: inherit;
   color: inherit;
@@ -606,9 +619,14 @@
   border: 1px solid var(--vj-line);
   border-radius: 2px;
   cursor: ew-resize;
-  touch-action: none;
+  /* pan-y, not none: a vertical swipe that lands on a fader must still
+     scroll the page (the body is mostly faders); horizontal drags are ours */
+  touch-action: pan-y;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
 }
+
+/* pull-away fine adjust engaged (finger far above/below the track) */
+.vj-fader.vj-fine { border-color: var(--vj-o3); }
 
 .vj-fader-fill {
   position: absolute;
@@ -838,6 +856,7 @@
   position: absolute;
   z-index: 60;
   min-width: 130px;
+  max-width: calc(100vw - 12px);
   background: var(--vj-module);
   border: 1px solid var(--vj-line);
   border-radius: 3px;
@@ -858,7 +877,7 @@
 .vj-menu-item:hover { background: var(--vj-chassis); }
 .vj-menu-item.vj-danger:hover { background: var(--vj-armed); color: #fff; }
 
-.vj-palette { width: 300px; }
+.vj-palette { width: min(300px, calc(100vw - 12px)); }
 
 .vj-palette-search {
   width: 100%;
@@ -1115,19 +1134,33 @@
 
 @media (pointer: coarse) {
   .vj-fader { height: 26px; }
+  /* .vj-bind .vj-fader (0,2,0) outguns the plain rule — repeat it here or
+     bind-row faders stay 12px tall on phones */
+  .vj-bind .vj-fader { height: 22px; }
   .vj-pp { width: 30px; height: 30px; margin-top: 4px; }
-  .vj-chip-menubtn { padding: 6px 10px; }
+  .vj-chip-menubtn { padding: 6px 10px; min-width: 40px; min-height: 34px; }
   .vj-menu-item { padding: 10px 12px; }
   /* remote decks are primarily touch surfaces — everything tappable ≥ ~34px */
   .vj-railbtn { min-width: 40px; min-height: 34px; }
   .vj-hush, .vj-fft { min-height: 34px; padding-left: 12px; padding-right: 12px; }
   .vj-scene { min-width: 64px; min-height: 44px; }
-  .vj-scenetool { min-width: 38px; min-height: 34px; }
+  .vj-scenetool { min-width: 44px; min-height: 34px; }
   .vj-seq-cell, .vj-seq-add { min-width: 34px; min-height: 34px; }
   .vj-refselect { min-height: 32px; }
   .vj-source-remove, .vj-strip-kill, .vj-audio-unbind { min-width: 34px; min-height: 30px; }
-  .vj-expr-freeze { min-width: 34px; }
+  .vj-expr-freeze { min-width: 34px; min-height: 30px; }
   .vj-newchain { min-height: 36px; }
+  /* tap-to-type readouts get a real target */
+  .vj-value { min-height: 26px; display: inline-flex; align-items: center; justify-content: flex-end; }
+  /* 16px text fields: anything smaller makes iOS zoom the page on focus */
+  .vj-value-input, .vj-palette-search, .vj-src-url, .vj-rangeform input,
+  .vj-pair-form input, .vj-pair-url { font-size: 16px; }
+  .vj-value-input { width: 84px; }
+}
+
+/* no hover on touch: controls that fade in on :hover must just be there */
+@media (hover: none) {
+  .vj-strip-kill { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
