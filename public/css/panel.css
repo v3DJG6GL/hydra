@@ -169,6 +169,7 @@
 
 .vj-preview {
   position: relative; /* anchors the OSD readout */
+  overflow: hidden; /* …and clips it while the monitor has no media yet */
   flex: 0 0 auto;
   background: #000;
   border-bottom: 1px solid var(--vj-line);
@@ -216,36 +217,17 @@
   border: 0;
   background: none;
   color: var(--vj-dim);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1;
-  padding: 1px 6px;
+  padding: 2px 8px;
   cursor: pointer;
   touch-action: manipulation;
 }
 
 .vj-preview-size:hover { color: var(--vj-silkscreen); }
 
-/* stream diagnostics: OSD toggle on the grip + signal-status readout,
-   styled like a broadcast monitor's on-screen display */
-.vj-preview .vj-preview-diag {
-  position: absolute;
-  left: 2px;
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 1px 8px;
-  color: var(--vj-dim);
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  line-height: 1;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-
-.vj-preview .vj-preview-diag:hover { color: var(--vj-silkscreen); }
-.vj-preview .vj-preview-diag.vj-on { color: var(--vj-o1); }
-
+/* signal-status readout, styled like a broadcast monitor's on-screen
+   display — toggled by the OSD button in the toprail (next to ◉ LIVE) */
 .vj-preview-stats {
   position: absolute;
   top: 5px;
@@ -271,9 +253,14 @@
 .vj-preview-stats .vj-osd-dim { color: var(--vj-dim); }
 
 @media (pointer: coarse) {
-  .vj-preview-grip { height: 20px; }
-  .vj-preview-size { font-size: 14px; padding: 3px 10px; }
-  .vj-preview .vj-preview-diag { font-size: 10px; padding: 5px 10px; }
+  .vj-preview-grip { height: 30px; }
+  .vj-preview-size {
+    font-size: 19px;
+    padding: 4px 16px;
+    min-width: 48px;
+    min-height: 28px;
+    color: var(--vj-silkscreen);
+  }
 }
 
 /* ---------- scene bank ---------- */
@@ -729,8 +716,8 @@
   border: 1px solid var(--vj-line);
   border-radius: 2px;
   cursor: ew-resize;
-  /* pan-y, not none: a vertical swipe that lands on a fader must still
-     scroll the page (the body is mostly faders); horizontal drags are ours */
+  /* hybrid (fine-pointer) devices: vertical swipes still scroll the page.
+     Coarse pointers override this to none — see the touch media block */
   touch-action: pan-y;
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
 }
@@ -1247,6 +1234,13 @@
   /* .vj-bind .vj-fader (0,2,0) outguns the plain rule — repeat it here or
      bind-row faders stay 12px tall on phones */
   .vj-bind .vj-fader { height: 22px; }
+  /* faders own their touches. The base pan-y lets iPadOS claim any drag
+     with a vertical-ish start as a page scroll — pointercancel then snaps
+     the value back mid-scrub. Scroll the deck from labels/gaps instead. */
+  .vj-fader { touch-action: none; }
+  /* the tools sit beside the pads as a row — stacked (the desktop column)
+     they inflate the scene strip with ~110px of dead height on tablets */
+  .vj-scenes-tools { flex-direction: row; align-items: center; }
   .vj-pp { width: 30px; height: 30px; margin-top: 4px; }
   .vj-chip-menubtn { padding: 6px 10px; min-width: 40px; min-height: 34px; }
   .vj-menu-item { padding: 10px 12px; }

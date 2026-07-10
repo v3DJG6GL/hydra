@@ -443,18 +443,8 @@ export default class RemoteHost {
             this._setPreviewH(next, true)
         }
         grip.appendChild(size)
-        const diag = doc.createElement('button')
-        diag.className = 'vj-preview-diag' + (this._statsOn ? ' vj-on' : '')
-        diag.textContent = 'OSD'
-        diag.title = 'toggle stream diagnostics'
-        diag.onclick = (e) => {
-            e.stopPropagation()
-            this._toggleStats()
-        }
-        grip.appendChild(diag)
-        this._diagBtn = diag
         grip.onpointerdown = (e) => {
-            if (e.target === size || e.target === diag) return
+            if (e.target === size) return
             e.preventDefault()
             try { grip.setPointerCapture(e.pointerId) } catch (err) { /* stale pointer */ }
             const startY = e.clientY
@@ -499,14 +489,18 @@ export default class RemoteHost {
         this._previewImg.style.display = mode === 'frames' ? '' : 'none'
     }
 
-    // ---- stream diagnostics: the OSD button on the grip toggles a
-    // signal-status readout in the pane's corner — active path, measured
-    // resolution / fps / bandwidth, LAN|WAN mode and the P2P link state.
-    // Bandwidth is shown in the units of the matching HYDRA_PREVIEW_*
-    // budget (kb/s for WebRTC, KB/s for frames) so it doubles as the
-    // tuning readout. The toggle is per-device (localStorage).
+    // ---- stream diagnostics: the OSD toprail button (panel.js renders it
+    // next to ◉ LIVE) toggles a signal-status readout in the pane's corner —
+    // active path, measured resolution / fps / bandwidth, LAN|WAN mode and
+    // the P2P link state. Bandwidth is shown in the units of the matching
+    // HYDRA_PREVIEW_* budget (kb/s for WebRTC, KB/s for frames) so it
+    // doubles as the tuning readout. The toggle is per-device (localStorage).
 
-    _toggleStats() {
+    statsOn() {
+        return !!this._statsOn
+    }
+
+    toggleStats() {
         this._statsOn = !this._statsOn
         try {
             if (this._statsOn) localStorage.setItem('hydra-vj-preview-diag', '1')
@@ -516,7 +510,6 @@ export default class RemoteHost {
     }
 
     _syncStats() {
-        if (this._diagBtn) this._diagBtn.classList.toggle('vj-on', !!this._statsOn)
         const on = !!(this._statsOn && this._previewOn && this._statsEl)
         if (this._statsEl) this._statsEl.style.display = on ? '' : 'none'
         if (on && !this._statsTimer) {

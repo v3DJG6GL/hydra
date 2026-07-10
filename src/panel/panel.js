@@ -905,6 +905,17 @@ export default class VJPanel {
                 this.renderAll()
             }
             rail.appendChild(prev)
+
+            // signal-status overlay on the preview (path, fps, bandwidth)
+            if (this.previewOn && this.host.toggleStats) {
+                const osd = el(d, 'button', 'vj-fft' + (this.host.statsOn() ? ' vj-on' : ''), 'OSD')
+                osd.title = this.tr('panel.osd', 'stream diagnostics on the preview: path, resolution, fps, bandwidth')
+                osd.onclick = () => {
+                    this.host.toggleStats()
+                    osd.classList.toggle('vj-on', this.host.statsOn())
+                }
+                rail.appendChild(osd)
+            }
         }
 
         const spacer = el(d, 'div', 'vj-spacer')

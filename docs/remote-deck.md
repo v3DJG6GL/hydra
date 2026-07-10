@@ -137,8 +137,10 @@ right-click does on the desktop lives behind a **long-press** on touch:
   (MIDI learn, audio/mouse bind, move left/right, clear, cycle pace…).
 - **Drag a fader** to scrub; slide your finger **above or below the
   track mid-drag** for up to 10× finer control (the track tints amber
-  while fine mode is engaged). Vertical swipes that merely start on a
-  fader still scroll the page — nothing commits.
+  while fine mode is engaged). On touch devices a fader owns any touch
+  that starts on it — drags can wander vertically without the page
+  scrolling out from under the gesture. Scroll the deck from labels,
+  chip headers or empty space instead.
 - **Scene reorder** on touch is the long-press menu's move left/right
   (drag-to-reorder needs a mouse).
 - **Hold a module's title bar (~⅓s)** to lift it for reorder; a plain
@@ -164,8 +166,9 @@ the grip to reset. The chosen size is remembered per device — and reported
 to the renderer, which sizes its stream to the largest connected pane so a
 big pane also means a *sharper* preview (within the budgets below).
 
-The **OSD** button on the left of the grip bar toggles a signal-status
-readout in the pane's corner, like a broadcast monitor's on-screen display:
+The **OSD** button in the deck's top rail (next to ◉ LIVE — it appears
+while LIVE is on) toggles a signal-status readout in the pane's corner,
+like a broadcast monitor's on-screen display:
 the active path (amber `● FRAMES` = relayed snapshots with their image
 format, green `● WEBRTC P2P` = live video with its codec), the measured
 resolution, framerate and bandwidth, plus the LAN/WAN mode, the P2P
