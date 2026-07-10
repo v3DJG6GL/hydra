@@ -479,6 +479,13 @@ export default class VJPanel {
             }
         }
         if (scene) {
+            // reorder without drag & drop — the only way to reorder on touch
+            if (i > 0) {
+                items.push({ label: this.tr('panel.scene-move-left', 'move left'), fn: () => this.moveScene(i, i - 1) })
+            }
+            if (i < this.scenes.length - 1) {
+                items.push({ label: this.tr('panel.scene-move-right', 'move right'), fn: () => this.moveScene(i, i + 1) })
+            }
             items.push({ label: this.tr('panel.scene-clear', 'clear slot'), fn: () => this.clearScene(i), danger: true })
         }
         if (!items.length) return
@@ -661,8 +668,58 @@ export default class VJPanel {
 
     // ---------------------------------------------------------------- render
 
+    // touch has no right-click, and iOS never fires contextmenu on its own:
+    // a 500ms still-press synthesizes one on the pressed element, so every
+    // right-click menu (scenes, faders, seq cells, cycle pace…) works from a
+    // long-press. The browser's own long-press UI (image-save sheet, text
+    // callout) is suppressed inside the panel — except on form fields,
+    // where native paste matters more than our menus.
+    attachTouchMenus(root) {
+        if (root.__vjTouchMenus) return
+        root.__vjTouchMenus = true
+        const doc = root.ownerDocument
+        const win = doc.defaultView
+        root.addEventListener('contextmenu', (e) => {
+            const tag = e.target.tagName
+            if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') e.preventDefault()
+        })
+        root.addEventListener('pointerdown', (e) => {
+            if (e.pointerType === 'mouse' || e.button !== 0) return
+            const target = e.target
+            const x0 = e.clientX
+            const y0 = e.clientY
+            const cleanup = () => {
+                win.clearTimeout(timer)
+                doc.removeEventListener('pointermove', move, true)
+                doc.removeEventListener('pointerup', cleanup, true)
+                doc.removeEventListener('pointercancel', cleanup, true)
+            }
+            const move = (me) => {
+                if (Math.abs(me.clientX - x0) + Math.abs(me.clientY - y0) > 9) cleanup()
+            }
+            const timer = win.setTimeout(() => {
+                cleanup()
+                if (this._touchDrag) return // a lifted chip owns this gesture
+                // the finger lifting off will still produce a click — eat it,
+                // or the long-press on a scene pad would also recall it
+                const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault() }
+                doc.addEventListener('click', swallow, true)
+                doc.addEventListener('pointerup', () => {
+                    win.setTimeout(() => doc.removeEventListener('click', swallow, true), 60)
+                }, { once: true, capture: true })
+                target.dispatchEvent(new win.MouseEvent('contextmenu', {
+                    bubbles: true, cancelable: true, view: win, clientX: x0, clientY: y0
+                }))
+            }, 500)
+            doc.addEventListener('pointermove', move, true)
+            doc.addEventListener('pointerup', cleanup, true)
+            doc.addEventListener('pointercancel', cleanup, true)
+        })
+    }
+
     renderInto(root) {
         const d = root.ownerDocument
+        this.attachTouchMenus(root)
         // every committed edit rebuilds this DOM from scratch — carry the
         // scroll offsets across the wipe so a value tweak deep in a long
         // chain doesn't fling the strip back to its start. index-keyed by
