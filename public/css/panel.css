@@ -67,12 +67,19 @@
   position: relative;
   width: 100vw;
   height: 100vh;
+  height: 100dvh; /* mobile: track the browser chrome, don't hide under it */
   display: flex;
   flex-direction: column;
   border-top: none;
+  overflow-x: hidden;
 }
 
-.vj-popup-body { margin: 0; background: #0a0b0d; overflow: hidden; }
+.vj-popup-body {
+  margin: 0;
+  background: #0a0b0d;
+  overflow: hidden;
+  overscroll-behavior: none; /* no pull-to-refresh mid-set */
+}
 
 .vj-orphan-note {
   display: none;
@@ -157,7 +164,7 @@
 .vj-preview img {
   display: block;
   width: 100%;
-  max-height: 220px;
+  max-height: min(220px, 35vh);
   object-fit: contain;
   background: #000;
 }
@@ -1192,15 +1199,24 @@
 .vj-remote-body {
   margin: 0;
   height: 100vh;
+  height: 100dvh; /* phones: 100vh hides the deck bottom under the url bar */
   display: flex;
   flex-direction: column;
   background: #0b0b10;
+  overscroll-behavior: none; /* a pull-to-refresh would reload the deck mid-set */
+  padding-top: env(safe-area-inset-top, 0);
+  padding-left: env(safe-area-inset-left, 0);
+  padding-right: env(safe-area-inset-right, 0);
 }
 .vj-remote-body #vj-remote-root {
   flex: 1;
   min-height: 0;
   height: auto;
   overflow-y: auto;
+  /* overflow-y alone computes overflow-x to auto — a too-wide toprail
+     would pan the entire deck sideways */
+  overflow-x: hidden;
+  overscroll-behavior: contain;
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
@@ -1220,7 +1236,7 @@
 
 .vj-remote-toasts {
   position: fixed;
-  bottom: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   z-index: 70;
