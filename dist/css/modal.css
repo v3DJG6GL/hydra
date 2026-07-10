@@ -77,6 +77,14 @@ transition: width 1s;
   pointer-events: none;
 }
 
+/* faded-out chrome must not stay clickable — .icon/.language-select carry
+   their own pointer-events:auto, so switch them off explicitly */
+#modal-header.ui-hidden { opacity: 0; }
+#modal-header.ui-hidden .icon,
+#modal-header.ui-hidden .language-select {
+  pointer-events: none;
+}
+
 #modal-header {
   width: 100%;
   /* height: 40px; */
