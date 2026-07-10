@@ -280,7 +280,11 @@ export default function remoteStore(state, emitter) {
         if (!stream || typeof RTCPeerConnection === 'undefined') return // deck times out into frames
         let pc
         try {
-            pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+            // two independent STUN providers — venue networks sometimes block one
+            pc = new RTCPeerConnection({ iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun.cloudflare.com:3478' }
+            ] })
         } catch (e) { return }
         pcs.set(deckId, pc)
         try {
@@ -299,8 +303,16 @@ export default function remoteStore(state, emitter) {
     const onRtcAnswer = (deckId, msg) => {
         const pc = pcs.get(deckId)
         if (!pc) return
-        if (msg.kind === 'answer') pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp }).catch(() => {})
-        else if (msg.kind === 'candidate') pc.addIceCandidate(msg.candidate).catch(() => { /* stale */ })
+        if (msg.kind === 'answer') {
+            pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp }).then(() => {
+                (pc.__pending || []).forEach((c) => pc.addIceCandidate(c).catch(() => { /* stale */ }))
+                pc.__pending = null
+            }).catch(() => {})
+        } else if (msg.kind === 'candidate') {
+            // trickle candidates can outrun the answer's setRemoteDescription
+            if (pc.remoteDescription) pc.addIceCandidate(msg.candidate).catch(() => { /* stale */ })
+            else (pc.__pending = pc.__pending || []).push(msg.candidate)
+        }
     }
 
     const syncFrameTimer = () => {

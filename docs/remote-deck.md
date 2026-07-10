@@ -129,11 +129,16 @@ right-click does on the desktop lives behind a **long-press** on touch:
 
 ## Live preview
 
-The ◉ LIVE button on the deck streams the renderer's canvas. It tries
-WebRTC first (peer-to-peer, signaled through the relay; STUN handles most
-NATs over WAN) and falls back automatically to JPEG frames over the relay
-(~3fps) when P2P can't connect. The stream pauses while the renderer's
-browser puts its tab fully to sleep.
+The ◉ LIVE button on the deck streams the renderer's canvas. JPEG frames
+over the relay (~3fps) start immediately — they travel the same path as
+the controls, so the preview works wherever the deck works, WAN included.
+In parallel the deck negotiates a WebRTC peer connection (signaled through
+the relay; STUN handles most NATs) and switches to the smooth video the
+moment P2P media actually flows; if the P2P route is blocked (symmetric
+NAT / carrier-grade NAT — common on mobile networks; there is no TURN
+server) the preview simply stays on the ~3fps frames, and if a live P2P
+link later drops the frames resume automatically. The stream pauses while
+the renderer's browser puts its tab fully to sleep.
 
 ## What happens when things drop
 

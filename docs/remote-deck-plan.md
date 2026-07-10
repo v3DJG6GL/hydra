@@ -5,10 +5,14 @@ renders fullscreen on another machine (typically a Raspberry Pi driving a
 projector). Status: **implemented** (milestones 1–6, 2026-07-10) — this file
 stays as the design rationale; usage lives in [remote-deck.md](remote-deck.md).
 Notable deltas from the plan: the live preview uses a raw RTCPeerConnection
-(no simple-peer fork needed), deltas are full-text pushes rather than splice
-deltas (sketches are tiny; the base-hash guard still rejects stale edits),
-and the pairing admin route is `deck.html` itself (no hash → pairing screen,
-reading the renderer's credentials from same-origin localStorage).
+(no simple-peer fork needed) and runs **frames-first** — relayed JPEG frames
+start immediately and WebRTC takes over only once P2P media actually flows
+(a receiver track `unmute`), because `ontrack` fires on offer application
+and is useless as a "P2P works" signal; deltas are full-text pushes rather
+than splice deltas (sketches are tiny; the base-hash guard still rejects
+stale edits), and the pairing admin route is `deck.html` itself (no hash →
+pairing screen, reading the renderer's credentials from same-origin
+localStorage).
 
 Decisions this plan is built on: controllers are Android tablets and desktop
 browsers (no iOS requirement), the rig must work **offline-first** (venue wifi

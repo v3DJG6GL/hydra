@@ -19,6 +19,11 @@ import { codeHash } from './wire.js'
 const LIVE_SEND_MS = 33 // coalesce fader streams to ~30Hz per path
 const BACKOFF_MIN = 500
 const BACKOFF_MAX = 8000
+// two independent STUN providers — venue networks sometimes block one
+const ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' }
+]
 
 export default class RemoteHost {
     constructor(opts) {
@@ -211,7 +216,9 @@ export default class RemoteHost {
                 this._onRtc(msg)
                 return
             case 'frame':
-                if (this._previewImg) {
+                // only while subscribed — a frame still in flight after the
+                // RTC upgrade must not flip the pane back to a frozen JPEG
+                if (this._previewImg && this._framesMode) {
                     this._previewImg.src = msg.data
                     this._setPreviewMode('frames')
                 }
@@ -315,9 +322,11 @@ export default class RemoteHost {
     }
 
     // ------------------------------------------------------------ preview
-    // WebRTC first (signaled through the relay; STUN keeps it working over
-    // WAN behind most NATs), throttled JPEG frames over the relay as the
-    // dependable fallback — frames traverse anything the controls traverse.
+    // Relayed JPEG frames start immediately — they traverse anything the
+    // control channel traverses, so the preview works wherever the deck
+    // works (WAN included). WebRTC negotiates in parallel (signaled through
+    // the relay; STUN only, no TURN) and the video takes over the moment
+    // P2P media actually flows; frames resume if it ever dies.
 
     captureStream() {
         return null // the panel uses canPreview()/previewElement() remotely
@@ -336,17 +345,16 @@ export default class RemoteHost {
             this._send({ op: 'previewStop' })
             this._framesOff()
             this._closePc()
-            clearTimeout(this._rtcTimer)
             if (this._previewVideo) this._previewVideo.srcObject = null
         }
     }
 
     _kickPreview() {
+        // a reconnect handed us a fresh relay id, so the host's frame
+        // subscription for the old id is gone — always resubscribe
+        this._framesMode = false
+        this._framesOn()
         this._send({ op: 'previewStart' })
-        clearTimeout(this._rtcTimer)
-        // no track in time -> the P2P route is blocked (symmetric NAT, no
-        // captureStream on the host…) -> switch to relayed frames
-        this._rtcTimer = setTimeout(() => { if (this._previewOn) this._framesOn() }, 5000)
     }
 
     previewElement(doc) {
@@ -368,7 +376,7 @@ export default class RemoteHost {
             this._previewVideo = video
             this._previewImg = img
             if (this._rtcStream) video.srcObject = this._rtcStream
-            this._setPreviewMode(this._mode || 'rtc')
+            this._setPreviewMode(this._mode || 'frames')
         }
         const p = this._previewVideo.play()
         if (p && p.catch) p.catch(() => { /* resumes on autoplay */ })
@@ -387,10 +395,9 @@ export default class RemoteHost {
             this._closePc()
             let pc
             try {
-                pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+                pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
             } catch (e) {
-                this._framesOn()
-                return
+                return // frames are already running
             }
             this._pc = pc
             pc.ontrack = (e) => {
@@ -400,26 +407,54 @@ export default class RemoteHost {
                     const p = this._previewVideo.play()
                     if (p && p.catch) p.catch(() => {})
                 }
-                clearTimeout(this._rtcTimer)
-                this._framesOff()
-                this._setPreviewMode('rtc')
+                // ontrack only means the offer lists a track — behind
+                // symmetric NAT the media never arrives. Receiver tracks
+                // unmute on the first RTP packet: that is the moment the
+                // video can take over from the frames.
+                const live = () => {
+                    this._rtcLive = true
+                    this._upgradeToRtc(pc)
+                }
+                if (e.track.muted === false) live()
+                else e.track.onunmute = live
             }
             pc.onicecandidate = (e) => {
                 if (e.candidate) this._send({ op: 'rtc', kind: 'candidate', candidate: e.candidate })
             }
             pc.oniceconnectionstatechange = () => {
-                if (this._previewOn && ['failed', 'disconnected', 'closed'].includes(pc.iceConnectionState)) {
-                    this._framesOn()
+                if (this._pc !== pc) return
+                const s = pc.iceConnectionState
+                if (['failed', 'disconnected', 'closed'].includes(s)) {
+                    if (this._previewOn) this._framesOn() // P2P died — frames resume
+                } else if (s === 'connected' || s === 'completed') {
+                    this._upgradeToRtc(pc) // back from a transient 'disconnected'
                 }
             }
             pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp })
-                .then(() => pc.createAnswer())
+                .then(() => {
+                    this._flushCandidates(pc)
+                    return pc.createAnswer()
+                })
                 .then((a) => pc.setLocalDescription(a))
                 .then(() => this._send({ op: 'rtc', kind: 'answer', sdp: pc.localDescription.sdp }))
-                .catch(() => this._framesOn())
+                .catch(() => { /* frames are already running */ })
         } else if (msg.kind === 'candidate' && this._pc) {
-            this._pc.addIceCandidate(msg.candidate).catch(() => { /* stale */ })
+            const pc = this._pc
+            // trickle candidates can outrun setRemoteDescription — queue them
+            if (pc.remoteDescription) pc.addIceCandidate(msg.candidate).catch(() => { /* stale */ })
+            else (pc.__pending = pc.__pending || []).push(msg.candidate)
         }
+    }
+
+    _flushCandidates(pc) {
+        (pc.__pending || []).forEach((c) => pc.addIceCandidate(c).catch(() => { /* stale */ }))
+        pc.__pending = null
+    }
+
+    _upgradeToRtc(pc) {
+        if (!this._previewOn || this._pc !== pc || !this._rtcLive) return
+        this._framesOff()
+        this._setPreviewMode('rtc')
     }
 
     _closePc() {
@@ -428,6 +463,7 @@ export default class RemoteHost {
             this._pc = null
         }
         this._rtcStream = null
+        this._rtcLive = false
     }
 
     _framesOn() {
