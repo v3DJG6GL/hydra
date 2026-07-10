@@ -83,6 +83,24 @@ localStorage, so subsequent plain loads keep them).
   `Connection` headers). The relay pings every 25s, which keeps sockets
   under typical idle timeouts.
 
+## Touch gestures (phones and tablets)
+
+The deck reshapes itself on phone widths — the top rail wraps into a
+transport row and a toggles row, and the scene bank becomes a 4×2 pad
+grid with the export/import/cycle tools underneath. Everything a
+right-click does on the desktop lives behind a **long-press** on touch:
+
+- **Long-press** a scene pad, fader, or sequencer cell for its menu
+  (MIDI learn, audio/mouse bind, move left/right, clear, cycle pace…).
+- **Drag a fader** to scrub; slide your finger **above or below the
+  track mid-drag** for up to 10× finer control (the track tints amber
+  while fine mode is engaged). Vertical swipes that merely start on a
+  fader still scroll the page — nothing commits.
+- **Scene reorder** on touch is the long-press menu's move left/right
+  (drag-to-reorder needs a mouse).
+- **Hold a module's title bar (~⅓s)** to lift it for reorder; a plain
+  sideways drag on the title bar pans the chain instead.
+
 ## Live preview
 
 The ◉ LIVE button on the deck streams the renderer's canvas. It tries
