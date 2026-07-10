@@ -1301,6 +1301,12 @@ export default class VJPanel {
                     this.apply(edit, { replaceURL: true })
                 }
                 liveKey = null
+            },
+            cancel: (v0) => {
+                // scroll stole the drag: park the uniform back on the value
+                // the gesture started from, not commit stray pixels of motion
+                if (liveKey) this.lb.set(liveKey, v0)
+                liveKey = null
             }
         })
         if (arg && arg.kind === 'number' && arg.path && !arg.noLive) {
@@ -1374,13 +1380,19 @@ export default class VJPanel {
         let dragging = false
         let moved = false
         let startX = 0
+        let lastX = 0
         let startV = 0
+        let acc = 0
+        let slop = 0
         track.onpointerdown = (e) => {
             if (e.button !== 0) return
             dragging = true
             moved = false
-            startX = e.clientX
-            startV = opts.get()
+            startX = lastX = e.clientX
+            startV = acc = opts.get()
+            // touch: a few px of slop, so taps and swipes the browser is
+            // about to claim as page scrolls don't nudge the value
+            slop = e.pointerType === 'mouse' ? 0 : 8
             track.setPointerCapture(e.pointerId)
             track.classList.add('vj-armed')
             if (opts.start) opts.start()
@@ -1388,11 +1400,24 @@ export default class VJPanel {
         }
         track.onpointermove = (e) => {
             if (!dragging) return
-            moved = true
+            if (!moved) {
+                if (Math.abs(e.clientX - startX) < slop) return
+                moved = true
+                lastX = e.clientX
+            }
+            // pull-away fine adjust: the farther the finger sits above or
+            // below the track, the finer the drag — down to 10%, the touch
+            // stand-in for the desktop's shift+drag
+            const r = track.getBoundingClientRect()
+            const away = Math.max(0, Math.max(r.top - e.clientY, e.clientY - r.bottom) - 24)
+            const fine = Math.max(0.1, 1 - away / 220) * (e.shiftKey ? 0.1 : 1)
+            track.classList.toggle('vj-fine', fine < 0.5)
+            // integrate deltas on a float accumulator: sensitivity can change
+            // mid-drag, and int params must still accumulate sub-step motion
             const scale = Math.max(Math.abs(startV), opts.ref, 0.001)
-            let v = startV + (e.clientX - startX) / 150 * scale * (e.shiftKey ? 0.1 : 1)
-            if (opts.int) v = Math.round(v)
-            v = parseFloat(v.toFixed(4))
+            acc += (e.clientX - lastX) / 150 * scale * fine
+            lastX = e.clientX
+            const v = opts.int ? Math.round(acc) : parseFloat(acc.toFixed(4))
             opts.live(v)
             paint(v)
         }
@@ -1400,8 +1425,18 @@ export default class VJPanel {
             if (!dragging) return
             dragging = false
             track.classList.remove('vj-armed')
+            track.classList.remove('vj-fine')
             try { track.releasePointerCapture(e.pointerId) } catch (err) {}
-            if (moved) opts.commit(opts.get())
+            if (!moved) return
+            if (e.type === 'pointercancel') {
+                // the browser took the gesture for a page scroll — undo the
+                // few px that leaked in before it decided
+                opts.live(startV)
+                paint(startV)
+                if (opts.cancel) opts.cancel(startV)
+                return
+            }
+            opts.commit(opts.get())
         }
         track.onpointerup = finish
         track.onpointercancel = finish
