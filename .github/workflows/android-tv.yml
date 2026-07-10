@@ -46,10 +46,16 @@ jobs:
           echo "code=$CODE" >> "$GITHUB_OUTPUT"
 
       - name: Decode keystore
-        if: ${{ secrets.TV_KEYSTORE_BASE64 != '' }}
+        # `secrets` is not a valid context in a step-level `if` — test in shell
         env:
           TV_KEYSTORE_BASE64: ${{ secrets.TV_KEYSTORE_BASE64 }}
-        run: echo "$TV_KEYSTORE_BASE64" | base64 -d > android/release.keystore
+        run: |
+          if [ -n "$TV_KEYSTORE_BASE64" ]; then
+            echo "$TV_KEYSTORE_BASE64" | base64 -d > android/release.keystore
+            echo "keystore decoded"
+          else
+            echo "no keystore secret — building unsigned"
+          fi
 
       - name: Build release APK
         env:
