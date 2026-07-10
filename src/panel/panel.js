@@ -2079,23 +2079,55 @@ export default class VJPanel {
     attachChipDrag(d, root, handle, chip, chainLike, index) {
         handle.onpointerdown = (e) => {
             if (e.button !== 0 || e.target.closest('.vj-chip-menubtn')) return
+            const touch = e.pointerType !== 'mouse'
+            const strip = chip.closest('.vj-chips')
             const startX = e.clientX
             const startY = e.clientY
+            let lastX = e.clientX
             let ghost = null
             let pps = []
             let targetGap = -1
+            let liftTimer = null
             handle.setPointerCapture(e.pointerId)
+
+            const lift = (ev) => {
+                ghost = chip.cloneNode(true)
+                ghost.className = chip.className + ' vj-drag-ghost'
+                ghost.style.width = chip.offsetWidth + 'px'
+                ghost.style.left = ev.clientX + 8 + 'px'
+                ghost.style.top = ev.clientY + 8 + 'px'
+                d.body.appendChild(ghost)
+                chip.classList.add('vj-lifting')
+                pps = Array.from(chip.parentNode.querySelectorAll(':scope > .vj-pp'))
+                chip.parentNode.classList.add('vj-dragging')
+                if (touch) {
+                    this._touchDrag = true // the long-press menu stands down
+                    try { if (navigator.vibrate) navigator.vibrate(15) } catch (err) {}
+                }
+            }
+            // touch: the chip head is the chain's one wide scroll surface, so
+            // a plain drag pans the strip — reordering starts from a 350ms
+            // hold (the lift), mirroring every mobile list-reorder
+            if (touch) {
+                liftTimer = setTimeout(() => {
+                    liftTimer = null
+                    lift(e)
+                }, 350)
+            }
 
             const onMove = (ev) => {
                 if (!ghost) {
+                    if (touch) {
+                        if (liftTimer && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 9) {
+                            clearTimeout(liftTimer)
+                            liftTimer = null
+                        }
+                        if (!liftTimer && strip) strip.scrollLeft -= ev.clientX - lastX
+                        lastX = ev.clientX
+                        return
+                    }
                     if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 7) return
-                    ghost = chip.cloneNode(true)
-                    ghost.className = chip.className + ' vj-drag-ghost'
-                    ghost.style.width = chip.offsetWidth + 'px'
-                    d.body.appendChild(ghost)
-                    chip.classList.add('vj-lifting')
-                    pps = Array.from(chip.parentNode.querySelectorAll(':scope > .vj-pp'))
-                    chip.parentNode.classList.add('vj-dragging')
+                    lift(ev)
                 }
                 ghost.style.left = ev.clientX + 8 + 'px'
                 ghost.style.top = ev.clientY + 8 + 'px'
@@ -2113,6 +2145,8 @@ export default class VJPanel {
                 handle.onpointermove = null
                 handle.onpointerup = null
                 handle.onpointercancel = null
+                if (liftTimer) clearTimeout(liftTimer)
+                this._touchDrag = false
                 if (ghost) {
                     ghost.remove()
                     chip.classList.remove('vj-lifting')
