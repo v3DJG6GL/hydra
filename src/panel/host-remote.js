@@ -11,6 +11,8 @@
 //   {op:'scene*', ...} {op:'global'|'audio'|'toggleCode'|'fft', ...}
 //   {op:'liveEnsure', path, value, reqId} {op:'liveSet', path, value}
 //   {op:'evalExpr', src, reqId} {op:'reqSnapshot'}
+//   {op:'previewStart', w} {op:'previewSize', w} {op:'previewStop'}
+//   {op:'frames', on} {op:'rtc', kind, …}
 // broadcasts (host bridge -> this):
 //   snapshot, codeChanged{cause}, scenes, ui, flash, fftFrame, evalResult,
 //   reverted, ack, exprResult, hostState
@@ -354,7 +356,19 @@ export default class RemoteHost {
         // subscription for the old id is gone — always resubscribe
         this._framesMode = false
         this._framesOn()
-        this._send({ op: 'previewStart' })
+        this._send({ op: 'previewStart', w: this._previewPx() })
+    }
+
+    // how large the preview actually renders, in device px — the host never
+    // encodes more than this (or its configured ceiling)
+    _previewPx() {
+        const doc = this._previewWrap ? this._previewWrap.ownerDocument : document
+        const win = doc.defaultView || window
+        const cssW = this._previewWrap ? this._previewWrap.getBoundingClientRect().width : 0
+        const h = this._prevH || Math.min(220, win.innerHeight * 0.35)
+        // object-fit: contain — the visible image is width- or height-bound
+        const shown = Math.min(cssW || win.innerWidth, h * 16 / 9)
+        return Math.round(Math.min(1920, Math.max(240, shown * (win.devicePixelRatio || 1))))
     }
 
     previewElement(doc) {
@@ -372,15 +386,83 @@ export default class RemoteHost {
             img.style.display = 'none'
             wrap.appendChild(video)
             wrap.appendChild(img)
+            wrap.appendChild(this._buildPreviewGrip(doc))
             this._previewWrap = wrap
             this._previewVideo = video
             this._previewImg = img
+            try {
+                const stored = parseInt(localStorage.getItem('hydra-vj-preview-h'), 10)
+                if (Number.isFinite(stored)) this._prevH = stored
+            } catch (e) { /* private mode */ }
+            if (this._prevH) wrap.style.setProperty('--vj-prev-h', this._prevH + 'px')
             if (this._rtcStream) video.srcObject = this._rtcStream
             this._setPreviewMode(this._mode || 'frames')
         }
         const p = this._previewVideo.play()
         if (p && p.catch) p.catch(() => { /* resumes on autoplay */ })
         return this._previewWrap
+    }
+
+    // ---- preview resizing: drag the grip for a free height, tap the size
+    // button to cycle presets, double-tap the grip to reset. The height is
+    // per-device (localStorage) and the host is told the resulting pixel
+    // size so big panes get sharper streams (within its budget)
+
+    _buildPreviewGrip(doc) {
+        const win = doc.defaultView
+        const grip = doc.createElement('div')
+        grip.className = 'vj-preview-grip'
+        grip.title = 'drag to resize the preview — double-tap to reset'
+        grip.appendChild(doc.createElement('i'))
+        const size = doc.createElement('button')
+        size.className = 'vj-preview-size'
+        size.textContent = '⤢'
+        size.title = 'cycle preview size'
+        size.onclick = (e) => {
+            e.stopPropagation()
+            const presets = [140, 220, 340, Math.round(win.innerHeight * 0.6)]
+            const cur = this._prevH || Math.min(220, win.innerHeight * 0.35)
+            const next = presets.find((p) => p > cur + 10) || presets[0]
+            this._setPreviewH(next, true)
+        }
+        grip.appendChild(size)
+        grip.onpointerdown = (e) => {
+            if (e.target === size) return
+            e.preventDefault()
+            try { grip.setPointerCapture(e.pointerId) } catch (err) { /* stale pointer */ }
+            const startY = e.clientY
+            const startH = this._prevH || Math.min(220, win.innerHeight * 0.35)
+            const move = (ev) => this._setPreviewH(startH + (ev.clientY - startY), false)
+            const done = (ev) => {
+                grip.removeEventListener('pointermove', move)
+                grip.removeEventListener('pointerup', done)
+                grip.removeEventListener('pointercancel', done)
+                this._setPreviewH(startH + (ev.clientY - startY), true)
+            }
+            grip.addEventListener('pointermove', move)
+            grip.addEventListener('pointerup', done)
+            grip.addEventListener('pointercancel', done)
+        }
+        grip.ondblclick = () => this._setPreviewH(null, true)
+        grip.oncontextmenu = (e) => e.preventDefault() // long-press is a drag here
+        return grip
+    }
+
+    _setPreviewH(px, commit) {
+        const doc = this._previewWrap ? this._previewWrap.ownerDocument : document
+        const win = doc.defaultView || window
+        this._prevH = px === null ? null
+            : Math.round(Math.min(win.innerHeight * 0.7, Math.max(90, px)))
+        if (this._previewWrap) {
+            if (this._prevH) this._previewWrap.style.setProperty('--vj-prev-h', this._prevH + 'px')
+            else this._previewWrap.style.removeProperty('--vj-prev-h')
+        }
+        if (!commit) return
+        try {
+            if (this._prevH) localStorage.setItem('hydra-vj-preview-h', String(this._prevH))
+            else localStorage.removeItem('hydra-vj-preview-h')
+        } catch (e) { /* private mode */ }
+        if (this._previewOn) this._send({ op: 'previewSize', w: this._previewPx() })
     }
 
     _setPreviewMode(mode) {

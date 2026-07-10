@@ -39,6 +39,15 @@ The design behind all of this is in [remote-deck-plan.md](remote-deck-plan.md).
 - The relay itself takes `HYDRA_RELAY_PORT` (default 8081), `HYDRA_RELAY_DATA_DIR` (default
   `/data`) and `HYDRA_RELAY_ALLOWED_ORIGINS` (comma-separated allowlist; default is
   same-host origin checking).
+- **Preview bandwidth budgets** are also set on the relay service (delivered
+  to the renderer when it connects; unset vars keep the mode-based defaults
+  described under [Live preview](#live-preview)):
+  - `HYDRA_PREVIEW_RTC_KBPS` — WebRTC sender bitrate cap (default 1200 WAN / 6000 LAN)
+  - `HYDRA_PREVIEW_FRAME_KBPS` — relayed-frames rate budget in KB/s (default 150 / 400)
+  - `HYDRA_PREVIEW_FRAME_WIDTH` — resolution ceiling for both paths (default 480 / 720)
+  - `HYDRA_PREVIEW_MIN_FRAME_MS` — fastest frame cadence (default 350)
+
+  For `npm run dev` the same vars work as plain environment variables.
 
 ## Pairing
 
@@ -141,14 +150,29 @@ server) the preview simply stays on the ~3fps frames, and if a live P2P
 link later drops the frames resume automatically. The stream pauses while
 the renderer's browser puts its tab fully to sleep.
 
-Preview bandwidth is budgeted on both paths — the deck's pane is small, so
-anything more is wasted uplink. The WebRTC stream is capped at 1.2 Mbit/s
-at preview resolution. The relayed frames aim for ~110 KB/s and degrade in
+The preview pane is **resizable**: drag the slim grip bar under the video
+(touch or mouse), tap the ⤢ button on it to cycle size presets, double-tap
+the grip to reset. The chosen size is remembered per device — and reported
+to the renderer, which sizes its stream to the largest connected pane so a
+big pane also means a *sharper* preview (within the budgets below).
+
+Preview bandwidth is budgeted on both paths and degrades in
 perceived-quality order — sharpness matters more than motion on a preview,
 so dense sketches (high-frequency `voronoi` is essentially noise, the worst
 case for any encoder) surrender framerate first (~3 → ~1.2 fps), then a
-little compression quality, and resolution only as the last resort. Calm
-sketches get the full 480px at ~3 fps; nothing saturates the uplink.
+little compression quality, and resolution only as the last resort,
+recovering in reverse when the sketch calms down. The budgets are picked by
+mode — the two can't be mixed anyway, and they have very different
+bandwidth realities:
+
+|                          | WAN (https) | LAN (http) |
+| ------------------------ | ----------- | ---------- |
+| WebRTC bitrate cap       | 1.2 Mbit/s  | 6 Mbit/s   |
+| Relayed-frames budget    | 150 KB/s    | 400 KB/s   |
+| Resolution ceiling       | 480 px      | 720 px     |
+
+Every value is overridable per deployment with the `HYDRA_PREVIEW_*`
+variables on the relay service (see *Customizing the deployment*).
 
 ## What happens when things drop
 

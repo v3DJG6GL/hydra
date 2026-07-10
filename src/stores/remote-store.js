@@ -238,11 +238,21 @@ export default function remoteStore(state, emitter) {
                 if (Array.isArray(msg.scenes)) p.host.sceneReplaceAll(msg.scenes)
                 return
             case 'previewStart':
+                if (typeof msg.w === 'number' && isFinite(msg.w)) frameReq.set(from, reqPx(msg.w))
                 startRtc(from, p)
                 return
+            case 'previewSize': {
+                // a deck pane was resized — retarget its streams live
+                if (typeof msg.w !== 'number' || !isFinite(msg.w)) return
+                frameReq.set(from, reqPx(msg.w))
+                const pc = pcs.get(from)
+                if (pc) capPreviewSenders(pc, deckTarget(from))
+                return
+            }
             case 'previewStop':
                 stopRtc(from)
                 frameSubs.delete(from)
+                frameReq.delete(from)
                 syncFrameTimer()
                 return
             case 'rtc':
@@ -278,25 +288,57 @@ export default function remoteStore(state, emitter) {
     let frameBusy = false
 
     // high-entropy sketches (voronoi at high frequency…) are the bandwidth
-    // worst case on both preview paths — budget them to preview-pane rates:
-    // the deck shows ~480px, anything beyond that is wasted uplink
-    const RTC_MAX_KBPS = 1200
-    // frames: a rate budget in data-URL chars/s (~¾ byte each on the wire,
-    // so ~110KB/s). Perceived quality order for a VJ preview is resolution >
-    // quality > motion — heavy sketches surrender framerate first (350 →
+    // worst case on both preview paths — budget them to preview-pane rates.
+    // Profile by mode: plain http IS the LAN rig by definition (see
+    // docs/remote-deck.md — mixing modes is impossible anyway), so it gets
+    // generous budgets; https (WAN) stays tight for venue uplinks. Both are
+    // overridable per-deployment via HYDRA_PREVIEW_* env vars on the relay,
+    // delivered in the welcome. frameKbps is the relayed-frames rate budget:
+    // base64 data-URL chars are one wire byte each, so kbps maps to chars/ms.
+    const lan = window.location.protocol === 'http:'
+    const prevCfg = {
+        rtcKbps: lan ? 6000 : 1200, // WebRTC sender bitrate cap
+        frameKbps: lan ? 400 : 150, // relayed-frames budget, KB/s
+        frameWidth: lan ? 720 : 480, // resolution ceiling, both paths
+        minFrameMs: 350 // fastest frame cadence
+    }
+    const PREV_CLAMPS = { rtcKbps: [100, 50000], frameKbps: [20, 5000], frameWidth: [160, 1920], minFrameMs: [100, 2000] }
+    const applyPreviewCfg = (cfg) => {
+        if (!cfg) return
+        Object.keys(PREV_CLAMPS).forEach((k) => {
+            const v = cfg[k]
+            if (typeof v === 'number' && isFinite(v)) {
+                prevCfg[k] = Math.min(PREV_CLAMPS[k][1], Math.max(PREV_CLAMPS[k][0], Math.round(v)))
+            }
+        })
+        frameMs = Math.max(frameMs, prevCfg.minFrameMs)
+    }
+
+    // decks report how large their preview pane actually renders (device
+    // px, sent with previewStart and again after a resize) — encoding more
+    // than the largest pane, or the configured ceiling, is wasted uplink
+    const frameReq = new Map() // deckId -> requested px
+    const reqPx = (w) => Math.min(1920, Math.max(160, Math.round(w)))
+    const deckTarget = (deckId) => Math.min(prevCfg.frameWidth, frameReq.get(deckId) || 480)
+    const frameWidths = () => {
+        let top = 480
+        frameReq.forEach((w) => { top = Math.max(top, w) })
+        top = Math.min(prevCfg.frameWidth, top)
+        return [top, Math.round(top * 0.75), Math.round(top * 0.6)]
+    }
+    // perceived quality order for a VJ preview is resolution > quality >
+    // motion — heavy sketches surrender framerate first (minFrameMs →
     // 800ms), then a little quality, then one resolution step at a time,
     // and walk back up in reverse when the sketch calms down
-    const FRAME_RATE_BUDGET = 150000
-    const FRAME_WIDTHS = [480, 360, 288]
-    const FRAME_MIN_MS = 350
     const FRAME_MAX_MS = 800
     let frameQ = 0.55
     let frameTier = 0
-    let frameMs = FRAME_MIN_MS
+    let frameMs = prevCfg.minFrameMs
 
     // best-effort sender cap — a UA without populated encodings just stays
-    // uncapped, exactly as before
-    const capPreviewSenders = (pc) => {
+    // uncapped, exactly as before. Re-callable: scaleResolutionDownBy and
+    // maxBitrate apply live, so a deck resize retargets without renegotiating
+    const capPreviewSenders = (pc, targetW) => {
         pc.getSenders().forEach((sender) => {
             if (!sender.track) return
             try {
@@ -304,8 +346,8 @@ export default function remoteStore(state, emitter) {
                 if (!prm.encodings || !prm.encodings.length) return
                 const w = sender.track.getSettings ? (sender.track.getSettings().width || 0) : 0
                 prm.encodings.forEach((enc) => {
-                    enc.maxBitrate = RTC_MAX_KBPS * 1000
-                    if (w > 640) enc.scaleResolutionDownBy = w / 480
+                    enc.maxBitrate = prevCfg.rtcKbps * 1000
+                    enc.scaleResolutionDownBy = w > targetW * 1.25 ? w / targetW : 1
                 })
                 prm.degradationPreference = 'maintain-framerate'
                 sender.setParameters(prm).catch(() => { /* caps rejected — uncapped */ })
@@ -344,7 +386,7 @@ export default function remoteStore(state, emitter) {
             }
             const offer = await pc.createOffer()
             await pc.setLocalDescription(offer)
-            capPreviewSenders(pc)
+            capPreviewSenders(pc, deckTarget(deckId))
             to(deckId, { t: 'rtc', kind: 'offer', sdp: pc.localDescription.sdp })
         } catch (e) {
             stopRtc(deckId)
@@ -399,24 +441,25 @@ export default function remoteStore(state, emitter) {
                 img.onload = () => {
                     try {
                         const c = document.createElement('canvas')
-                        const w = FRAME_WIDTHS[frameTier]
+                        const w = frameWidths()[frameTier]
                         c.width = w
                         c.height = Math.max(1, Math.round(w * img.height / img.width))
                         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
                         const data = c.toDataURL(frameMime, frameQ)
                         // feedback toward the rate budget — framerate gives
                         // way first, resolution last (and recovers first)
+                        const budget = prevCfg.frameKbps * 1000
                         const rate = data.length * 1000 / frameMs
-                        if (rate > FRAME_RATE_BUDGET) {
+                        if (rate > budget) {
                             if (frameMs < FRAME_MAX_MS) {
-                                const need = Math.round(data.length * 1000 / FRAME_RATE_BUDGET)
+                                const need = Math.round(data.length * 1000 / budget)
                                 frameMs = Math.min(FRAME_MAX_MS, Math.max(frameMs + 50, need))
                             } else if (frameQ > 0.4) frameQ = Math.max(0.4, frameQ - 0.07)
-                            else if (frameTier < FRAME_WIDTHS.length - 1) frameTier++
-                        } else if (rate < FRAME_RATE_BUDGET * 0.5) {
+                            else if (frameTier < 2) frameTier++
+                        } else if (rate < budget * 0.5) {
                             if (frameTier > 0) frameTier--
                             else if (frameQ < 0.55) frameQ = Math.min(0.55, frameQ + 0.04)
-                            else if (frameMs > FRAME_MIN_MS) frameMs = Math.max(FRAME_MIN_MS, frameMs - 60)
+                            else if (frameMs > prevCfg.minFrameMs) frameMs = Math.max(prevCfg.minFrameMs, frameMs - 60)
                         }
                         frameSubs.forEach((id) => to(id, { t: 'frame', data }))
                     } catch (e) { /* canvas hiccup — drop the frame */ }
@@ -493,6 +536,7 @@ export default function remoteStore(state, emitter) {
                 backoff = 1000
                 state.vjRemote.connected = true
                 state.vjRemote.decks = msg.deckCount || 0
+                applyPreviewCfg(msg.preview)
                 // a kiosk with wiped localStorage gets its bank back from the relay
                 const p = wireScenes()
                 if (p && Array.isArray(msg.persistedScenes) && p.host.scenes.every((s) => !s) &&
@@ -514,6 +558,7 @@ export default function remoteStore(state, emitter) {
                 syncFftTimer()
                 stopRtc(msg.id)
                 frameSubs.delete(msg.id)
+                frameReq.delete(msg.id)
                 syncFrameTimer()
                 commitDeckValues(msg.id)
                 emitter.emit('vj-remote: deck-left', msg.id)

@@ -8,8 +8,10 @@
 // Wire protocol (JSON text frames):
 //   first frame (within HELLO_TIMEOUT):
 //     {t:'hello', role:'host'|'deck', room, token, build?}
-//   relay replies {t:'welcome', id, role, hostPresent, persistedScenes?}
-//     (persistedScenes only to the host) or closes with {t:'error', code}.
+//   relay replies {t:'welcome', id, role, hostPresent, persistedScenes?,
+//     preview?} (persistedScenes/preview only to the host — preview carries
+//     the HYDRA_PREVIEW_* budget overrides, see below) or closes with
+//     {t:'error', code}.
 //   host -> relay:  {t:'cast', msg}         broadcast msg to every deck
 //                   {t:'to', id, msg}       send msg to one deck
 //                   {t:'persist', scenes}   store the scene bank
@@ -45,11 +47,34 @@ const timingSafeEq = (a, b) => {
     return crypto.timingSafeEqual(ha, hb)
 }
 
+// Preview bandwidth budgets, pushed to the renderer in its welcome. Unset
+// vars leave the page's own mode-based defaults (LAN generous / WAN tight)
+// alone — only explicitly set values override, clamped to sane ranges.
+//   HYDRA_PREVIEW_RTC_KBPS      WebRTC sender bitrate cap
+//   HYDRA_PREVIEW_FRAME_KBPS    relayed-frames rate budget (KB/s on the wire)
+//   HYDRA_PREVIEW_FRAME_WIDTH   preview resolution ceiling (both paths)
+//   HYDRA_PREVIEW_MIN_FRAME_MS  fastest frame cadence
+const previewCfg = (env) => {
+    const pick = (name, lo, hi) => {
+        const v = parseInt(env[name], 10)
+        return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : undefined
+    }
+    const cfg = {
+        rtcKbps: pick('HYDRA_PREVIEW_RTC_KBPS', 100, 50000),
+        frameKbps: pick('HYDRA_PREVIEW_FRAME_KBPS', 20, 5000),
+        frameWidth: pick('HYDRA_PREVIEW_FRAME_WIDTH', 160, 1920),
+        minFrameMs: pick('HYDRA_PREVIEW_MIN_FRAME_MS', 100, 2000)
+    }
+    Object.keys(cfg).forEach((k) => { if (cfg[k] === undefined) delete cfg[k] })
+    return Object.keys(cfg).length ? cfg : null
+}
+
 export function attachRelay(httpServer, opts = {}) {
     const wsPath = opts.path || '/ws'
     const dataDir = opts.dataDir || process.env.HYDRA_RELAY_DATA_DIR || './vj-data'
     const allowedOrigins = (opts.allowedOrigins || process.env.HYDRA_RELAY_ALLOWED_ORIGINS || '')
         .split(',').map((s) => s.trim()).filter(Boolean)
+    const preview = opts.preview !== undefined ? opts.preview : previewCfg(process.env)
     const log = opts.quiet ? () => {} : (...a) => console.log('[vj-relay]', ...a)
 
     try { fs.mkdirSync(dataDir, { recursive: true }) } catch (e) { /* read-only fs: persistence off */ }
@@ -153,7 +178,8 @@ export function attachRelay(httpServer, opts = {}) {
                         t: 'welcome', id, role: 'host',
                         hostPresent: true,
                         deckCount: room.decks.size,
-                        persistedScenes: loadPersisted(msg.room)
+                        persistedScenes: loadPersisted(msg.room),
+                        ...(preview ? { preview } : {})
                     })
                     room.decks.forEach((deck) => send(deck, { t: 'hostState', present: true }))
                     log(`host ${id} up in ${msg.room} (${room.decks.size} decks waiting)`)

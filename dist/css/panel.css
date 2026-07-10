@@ -177,9 +177,56 @@
 .vj-preview img {
   display: block;
   width: 100%;
-  max-height: min(220px, 35vh);
+  max-height: var(--vj-prev-h, min(220px, 35vh));
   object-fit: contain;
   background: #000;
+}
+
+/* resize grip (remote decks): a slim silkscreen bar under the monitor */
+.vj-preview-grip {
+  position: relative;
+  height: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+  background: var(--vj-module);
+  border-top: 1px solid var(--vj-line);
+}
+
+.vj-preview-grip i {
+  width: 44px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--vj-dim);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.vj-preview-grip:hover i,
+.vj-preview-grip:active i { opacity: 1; }
+
+.vj-preview-size {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: none;
+  color: var(--vj-dim);
+  font-size: 11px;
+  line-height: 1;
+  padding: 1px 6px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.vj-preview-size:hover { color: var(--vj-silkscreen); }
+
+@media (pointer: coarse) {
+  .vj-preview-grip { height: 20px; }
+  .vj-preview-size { font-size: 14px; padding: 3px 10px; }
 }
 
 /* ---------- scene bank ---------- */
@@ -1217,7 +1264,7 @@
 @media (max-height: 520px) {
   .vj-scenes-tools { flex-direction: row; }
   .vj-preview video,
-  .vj-preview img { max-height: 34vh; }
+  .vj-preview img { max-height: var(--vj-prev-h, 34vh); }
 }
 
 /* ---------- remote deck ---------- */

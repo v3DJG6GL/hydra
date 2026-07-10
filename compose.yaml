@@ -31,6 +31,14 @@ services:
     container_name: hydra-relay
     restart: unless-stopped
     # user: "568:568"
+    # Live-preview bandwidth budgets, pushed to the renderer on connect.
+    # Unset vars keep the mode defaults (WAN https: 1200/150/480 — LAN http:
+    # 6000/400/720). See docs/remote-deck.md.
+    # environment:
+    #   HYDRA_PREVIEW_RTC_KBPS: "1200"    # WebRTC sender cap (kbit/s)
+    #   HYDRA_PREVIEW_FRAME_KBPS: "150"   # relayed-frames budget (KB/s)
+    #   HYDRA_PREVIEW_FRAME_WIDTH: "480"  # preview resolution ceiling (px)
+    #   HYDRA_PREVIEW_MIN_FRAME_MS: "350" # fastest frame cadence
     volumes:
       # per-room scene banks survive restarts (and kiosk browsers that wipe
       # localStorage)
