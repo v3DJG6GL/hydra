@@ -141,12 +141,14 @@ server) the preview simply stays on the ~3fps frames, and if a live P2P
 link later drops the frames resume automatically. The stream pauses while
 the renderer's browser puts its tab fully to sleep.
 
-Preview bandwidth is capped on both paths — the deck's pane is small, so
-anything more is wasted uplink. The WebRTC stream is limited to 0.8 Mbit/s
-at preview resolution, and the relayed frames adapt quality and size
-toward ~20 KB per frame. Even pathological sketches (high-frequency
-`voronoi` is essentially noise, the worst case for any encoder) stay
-around ~100 KiB/s of upload instead of saturating the link.
+Preview bandwidth is budgeted on both paths — the deck's pane is small, so
+anything more is wasted uplink. The WebRTC stream is capped at 1.2 Mbit/s
+at preview resolution. The relayed frames aim for ~110 KB/s and degrade in
+perceived-quality order — sharpness matters more than motion on a preview,
+so dense sketches (high-frequency `voronoi` is essentially noise, the worst
+case for any encoder) surrender framerate first (~3 → ~1.2 fps), then a
+little compression quality, and resolution only as the last resort. Calm
+sketches get the full 480px at ~3 fps; nothing saturates the uplink.
 
 ## What happens when things drop
 

@@ -259,7 +259,7 @@ export default function remoteStore(state, emitter) {
     }
 
     // ---- live preview: hydra's captureStream over WebRTC per deck, with
-    // relayed frames (getScreenImage, ~3fps) as the dependable fallback
+    // relayed frames (getScreenImage, adaptive ~1–3fps) as the fallback
 
     // WebP is ~30% smaller than JPEG at like quality and every deck browser
     // decodes it — but not every host encodes it (Safari): toDataURL falls
@@ -278,15 +278,21 @@ export default function remoteStore(state, emitter) {
     let frameBusy = false
 
     // high-entropy sketches (voronoi at high frequency…) are the bandwidth
-    // worst case on both preview paths — cap them to preview-pane budgets:
+    // worst case on both preview paths — budget them to preview-pane rates:
     // the deck shows ~480px, anything beyond that is wasted uplink
-    const RTC_MAX_KBPS = 800
-    const FRAME_BUDGET = 28000 // data-URL chars ≈ 21KB wire ≈ 60KiB/s at 3fps
-    // noise barely responds to quality (entropy dominates) — resolution is
-    // the lever that actually bites, so the tiers go low
-    const FRAME_WIDTHS = [480, 360, 288, 224, 176]
+    const RTC_MAX_KBPS = 1200
+    // frames: a rate budget in data-URL chars/s (~¾ byte each on the wire,
+    // so ~110KB/s). Perceived quality order for a VJ preview is resolution >
+    // quality > motion — heavy sketches surrender framerate first (350 →
+    // 800ms), then a little quality, then one resolution step at a time,
+    // and walk back up in reverse when the sketch calms down
+    const FRAME_RATE_BUDGET = 150000
+    const FRAME_WIDTHS = [480, 360, 288]
+    const FRAME_MIN_MS = 350
+    const FRAME_MAX_MS = 800
     let frameQ = 0.55
     let frameTier = 0
+    let frameMs = FRAME_MIN_MS
 
     // best-effort sender cap — a UA without populated encodings just stays
     // uncapped, exactly as before
@@ -360,10 +366,19 @@ export default function remoteStore(state, emitter) {
         }
     }
 
+    // self-scheduling so the cadence can adapt; the first frame goes out
+    // immediately on subscribe
+    const scheduleFrame = (ms) => {
+        frameTimer = setTimeout(() => {
+            captureFrame()
+            if (frameSubs.size) scheduleFrame(frameMs)
+            else frameTimer = null
+        }, ms)
+    }
     const syncFrameTimer = () => {
-        if (frameSubs.size && !frameTimer) frameTimer = setInterval(captureFrame, 350)
+        if (frameSubs.size && !frameTimer) scheduleFrame(0)
         else if (!frameSubs.size && frameTimer) {
-            clearInterval(frameTimer)
+            clearTimeout(frameTimer)
             frameTimer = null
         }
     }
@@ -389,17 +404,19 @@ export default function remoteStore(state, emitter) {
                         c.height = Math.max(1, Math.round(w * img.height / img.width))
                         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
                         const data = c.toDataURL(frameMime, frameQ)
-                        // feedback toward the budget: big overshoots drop a
-                        // resolution tier straight away, small ones trim
-                        // quality — and back up when the sketch calms down
-                        if (data.length > FRAME_BUDGET) {
-                            const canDrop = frameTier < FRAME_WIDTHS.length - 1
-                            if (canDrop && data.length > FRAME_BUDGET * 1.8) frameTier++
-                            else if (frameQ > 0.3) frameQ = Math.max(0.3, frameQ - 0.07)
-                            else if (canDrop) frameTier++
-                        } else if (data.length < FRAME_BUDGET * 0.45 && (frameQ < 0.55 || frameTier > 0)) {
-                            if (frameQ < 0.55) frameQ = Math.min(0.55, frameQ + 0.04)
-                            else { frameTier--; frameQ = 0.45 }
+                        // feedback toward the rate budget — framerate gives
+                        // way first, resolution last (and recovers first)
+                        const rate = data.length * 1000 / frameMs
+                        if (rate > FRAME_RATE_BUDGET) {
+                            if (frameMs < FRAME_MAX_MS) {
+                                const need = Math.round(data.length * 1000 / FRAME_RATE_BUDGET)
+                                frameMs = Math.min(FRAME_MAX_MS, Math.max(frameMs + 50, need))
+                            } else if (frameQ > 0.4) frameQ = Math.max(0.4, frameQ - 0.07)
+                            else if (frameTier < FRAME_WIDTHS.length - 1) frameTier++
+                        } else if (rate < FRAME_RATE_BUDGET * 0.5) {
+                            if (frameTier > 0) frameTier--
+                            else if (frameQ < 0.55) frameQ = Math.min(0.55, frameQ + 0.04)
+                            else if (frameMs > FRAME_MIN_MS) frameMs = Math.max(FRAME_MIN_MS, frameMs - 60)
                         }
                         frameSubs.forEach((id) => to(id, { t: 'frame', data }))
                     } catch (e) { /* canvas hiccup — drop the frame */ }
