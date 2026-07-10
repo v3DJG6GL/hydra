@@ -21,6 +21,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("autostart", true)
         set(v) { sp.edit().putBoolean("autostart", v).apply() }
 
+    /** Show the settings screen on every manual launch (boot autostart skips it). */
+    var configOnLaunch: Boolean
+        get() = sp.getBoolean("configOnLaunch", false)
+        set(v) { sp.edit().putBoolean("configOnLaunch", v).apply() }
+
     /** Native audio capture allowed at all (capture itself starts on request). */
     var audioEnabled: Boolean
         get() = sp.getBoolean("audioEnabled", false)
@@ -53,12 +58,23 @@ class Prefs(context: Context) {
     }
 
     companion object {
-        /** Bare "192.168.1.50:8080" becomes "http://192.168.1.50:8080/". */
+        /**
+         * Trim, ensure a path, and guarantee ?display=1 — the app exists to
+         * show the display page, nobody should have to remember the param.
+         * A missing http/https scheme is deliberately left off: UrlProbe
+         * resolves it at load time (https first, then http).
+         */
         fun normalizeUrl(raw: String): String {
             val s = raw.trim()
             if (s.isEmpty()) return ""
-            val withScheme = if (s.startsWith("http://") || s.startsWith("https://")) s else "http://$s"
-            return if (android.net.Uri.parse(withScheme).path.isNullOrEmpty()) "$withScheme/" else withScheme
+            val frag = s.substringAfter('#', "")
+            var base = s.substringBefore('#')
+            val afterScheme = base.indexOf("://").let { if (it >= 0) it + 3 else 0 }
+            if (!base.substring(afterScheme).contains('/')) base += "/"
+            if (!Regex("[?&]display=").containsMatchIn(base)) {
+                base += if (base.contains('?')) "&display=1" else "?display=1"
+            }
+            return base + if (frag.isNotEmpty()) "#$frag" else ""
         }
     }
 }

@@ -18,7 +18,9 @@ class BootReceiver : BroadcastReceiver() {
         if (!prefs.autostart || prefs.serverUrl.isBlank()) return
         try {
             context.startActivity(
-                Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                Intent(context, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra(MainActivity.EXTRA_FROM_BOOT, true))
         } catch (e: Exception) { /* BAL blocked without the overlay grant */ }
     }
 }

@@ -2,6 +2,7 @@ package io.github.v3djg6gl.hydra.tv
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -40,6 +41,7 @@ class SettingsActivity : Activity() {
     private lateinit var urlIn: EditText
     private lateinit var nameIn: EditText
     private lateinit var autostartSw: Switch
+    private lateinit var configSw: Switch
     private lateinit var audioSw: Switch
     private lateinit var deviceSpin: Spinner
     private lateinit var diag: TextView
@@ -59,7 +61,7 @@ class SettingsActivity : Activity() {
 
         col.addView(caption("HYDRA DISPLAY — SETTINGS", 22f, "#dffff9"))
 
-        col.addView(caption("server url (e.g. https://hydra-….example.com/?display=1  or  http://<pi>:8080/?display=1)", 12f))
+        col.addView(caption("server url — e.g. hydra.example.com or 192.168.1.50:8080 (https is tried first, then http; ?display=1 is added automatically)", 12f))
         urlIn = EditText(this).apply {
             setText(prefs.serverUrl)
             inputType = InputType.TYPE_TEXT_VARIATION_URI
@@ -67,6 +69,20 @@ class SettingsActivity : Activity() {
             setTextColor(Color.WHITE)
         }
         col.addView(urlIn)
+        col.addView(Button(this).apply {
+            text = "paste from clipboard"
+            isAllCaps = false
+            setOnClickListener {
+                val clip = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                val txt = clip.primaryClip?.takeIf { it.itemCount > 0 }
+                    ?.getItemAt(0)?.coerceToText(this@SettingsActivity)?.toString()?.trim()
+                if (txt.isNullOrEmpty()) {
+                    Toast.makeText(this@SettingsActivity, "clipboard is empty", Toast.LENGTH_SHORT).show()
+                } else {
+                    urlIn.setText(txt)
+                }
+            }
+        })
         prefs.recentUrls.filter { it != prefs.serverUrl }.take(2).forEach { recent ->
             col.addView(Button(this).apply {
                 text = "recent: $recent"
@@ -104,6 +120,14 @@ class SettingsActivity : Activity() {
             })
         }
 
+        configSw = Switch(this).apply {
+            text = "open this settings screen on every app start"
+            isChecked = prefs.configOnLaunch
+            setTextColor(Color.WHITE)
+        }
+        col.addView(configSw)
+        col.addView(caption("boot autostart goes straight to the kiosk either way", 11f))
+
         audioSw = Switch(this).apply {
             text = "allow native audio capture (TV mic → a.fft)"
             isChecked = prefs.audioEnabled
@@ -140,6 +164,10 @@ class SettingsActivity : Activity() {
                     .setNegativeButton("KEEP", null)
                     .show()
             }
+        })
+        col.addView(Button(this).apply {
+            text = "EXIT APP"
+            setOnClickListener { finishAffinity() }
         })
 
         diag = caption(diagnostics(), 11f)
@@ -190,6 +218,7 @@ class SettingsActivity : Activity() {
         prefs.serverUrl = urlIn.text.toString()
         prefs.displayName = nameIn.text.toString()
         prefs.autostart = autostartSw.isChecked
+        prefs.configOnLaunch = configSw.isChecked
         prefs.audioEnabled = audioSw.isChecked
         prefs.audioPreferredDevice = deviceIds.getOrElse(deviceSpin.selectedItemPosition) { "" }
         prefs.rememberUrl(prefs.serverUrl)
@@ -200,26 +229,35 @@ class SettingsActivity : Activity() {
             Toast.makeText(this, "set a server url first", Toast.LENGTH_SHORT).show()
             return
         }
-        startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
+        startActivity(Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .putExtra(MainActivity.EXTRA_FROM_SETTINGS, true))
         finish()
     }
 
     private fun testConnection() {
-        val url = prefs.serverUrl
-        if (url.isBlank()) return
-        thread {
-            val result = try {
-                val conn = URL(url).openConnection() as HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.connectTimeout = 5000
-                conn.readTimeout = 5000
-                val code = conn.responseCode
-                conn.disconnect()
-                "HTTP $code"
-            } catch (e: Exception) {
-                "failed: ${e.message}"
+        val raw = prefs.serverUrl
+        if (raw.isBlank()) return
+        UrlProbe.resolve(raw) { url ->
+            // pin the scheme the probe picked so the kiosk skips re-probing
+            if (url != raw) {
+                prefs.serverUrl = url
+                urlIn.setText(prefs.serverUrl)
             }
-            runOnUiThread { Toast.makeText(this, "$url → $result", Toast.LENGTH_LONG).show() }
+            thread {
+                val result = try {
+                    val conn = URL(url).openConnection() as HttpURLConnection
+                    conn.requestMethod = "GET"
+                    conn.connectTimeout = 5000
+                    conn.readTimeout = 5000
+                    val code = conn.responseCode
+                    conn.disconnect()
+                    "HTTP $code"
+                } catch (e: Exception) {
+                    "failed: ${e.message}"
+                }
+                runOnUiThread { Toast.makeText(this, "$url → $result", Toast.LENGTH_LONG).show() }
+            }
         }
     }
 
@@ -250,7 +288,9 @@ class SettingsActivity : Activity() {
         if (intent.hasExtra("audio")) prefs.audioEnabled = intent.getBooleanExtra("audio", false)
         if (intent.getBooleanExtra("apply", false)) {
             prefs.rememberUrl(prefs.serverUrl)
-            startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            startActivity(Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(MainActivity.EXTRA_FROM_SETTINGS, true))
             finish()
         }
     }

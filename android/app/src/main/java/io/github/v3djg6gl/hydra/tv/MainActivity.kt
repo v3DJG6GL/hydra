@@ -33,6 +33,8 @@ class MainActivity : Activity() {
     companion object {
         private const val RC_MIC = 41
         private const val EXIT_WINDOW_MS = 2000L
+        const val EXTRA_FROM_SETTINGS = "fromSettings"
+        const val EXTRA_FROM_BOOT = "fromBoot"
     }
 
     lateinit var prefs: Prefs
@@ -44,6 +46,7 @@ class MainActivity : Activity() {
     private var errorOverlay: LinearLayout? = null
     private var lastBackUp = 0L
     private var backLongPressFired = false
+    private var sentToSettings = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,10 +74,30 @@ class MainActivity : Activity() {
         host = WebViewHost(this, bridge, root)
     }
 
+    // singleTask: launcher/boot relaunches land here — keep getIntent() honest
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        // a fresh manual launch re-arms the optional config-on-launch screen
+        if (!intent.getBooleanExtra(EXTRA_FROM_SETTINGS, false) &&
+            !intent.getBooleanExtra(EXTRA_FROM_BOOT, false)) sentToSettings = false
+    }
+
     override fun onResume() {
         super.onResume()
         hideSystemBars()
+        val skipConfig = intent?.getBooleanExtra(EXTRA_FROM_SETTINGS, false) == true ||
+            intent?.getBooleanExtra(EXTRA_FROM_BOOT, false) == true
         if (prefs.serverUrl.isBlank()) {
+            // backed out of settings without configuring → let the app close
+            // instead of bouncing straight back into settings forever
+            if (sentToSettings) { finish(); return }
+            sentToSettings = true
+            openSettings()
+            return
+        }
+        if (prefs.configOnLaunch && !skipConfig && !sentToSettings) {
+            sentToSettings = true
             openSettings()
             return
         }
@@ -114,7 +137,13 @@ class MainActivity : Activity() {
 
     private fun loadKiosk() {
         hideErrorOverlay()
-        host.load(prefs.serverUrl)
+        // scheme-less URLs (user typed a bare host) resolve https→http here;
+        // the resolved form is persisted so the origin checks see it too
+        UrlProbe.resolve(prefs.serverUrl) { resolved ->
+            if (isFinishing || isDestroyed) return@resolve
+            if (resolved != prefs.serverUrl) prefs.serverUrl = resolved
+            host.load(prefs.serverUrl)
+        }
     }
 
     fun reloadPage(reason: String) {

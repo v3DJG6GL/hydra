@@ -47,9 +47,11 @@ the on-screen settings (hold BACK).
 ## First run
 
 1. The app opens its settings screen (no URL configured yet).
-2. Enter the server URL — the **same origin rule applies as everywhere
-   else** (see remote-deck.md): all-LAN (`http://<pi>:8080/?display=1`) or
-   all-WAN (`https://hydra-….example.org/?display=1`). Never mix.
+2. Enter the server URL — a bare `hydra.example.org` or `192.168.1.50:8080`
+   is enough: https is probed first (then http), and `?display=1` is
+   appended automatically. *Paste from clipboard* sits right under the
+   field. The **same origin rule applies as everywhere else** (see
+   remote-deck.md): all-LAN or all-WAN, never mix.
 3. SAVE & OPEN KIOSK. The page boots to the pairing screen: a short code
    like `ABCD-2345`.
 4. On a paired deck: toprail QR button → **LINK A TV / DISPLAY** → type the
@@ -74,6 +76,11 @@ password, and know that the newest renderer always wins the room).
 | BACK ×1 | sends Escape to the page |
 | BACK ×2 | exit the app |
 | BACK (hold) or MENU | settings |
+
+If you'd rather land in settings every time the app starts, flip *open
+this settings screen on every app start* in settings (boot autostart
+still goes straight to the kiosk). EXIT APP in settings closes the app
+even before a URL is configured.
 
 ## Audio-reactive visuals on a TV
 
