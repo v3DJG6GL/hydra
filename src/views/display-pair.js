@@ -46,6 +46,12 @@ export function startPairing({ onPaired }) {
         'this code grants nothing by itself — a paired deck must approve it')
     wrap.append(eyebrow, title, codeEl, sub, foot)
     document.body.appendChild(wrap)
+    // choo morphs <body> on every render and clobbers foreign nodes — keep
+    // the overlay mounted for as long as pairing is running
+    const remount = setInterval(() => {
+        if (done) return clearInterval(remount)
+        if (!wrap.isConnected) document.body.appendChild(wrap)
+    }, 400)
 
     function mk(tag, css, text) {
         const n = document.createElement(tag)

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext allowed globally: NSC has no CIDR support, so a runtime-
+     configured LAN origin (http://<pi>:8080) cannot be whitelisted ahead of
+     time. This matches the documented LAN posture of the Chromium kiosk
+     (docs/remote-deck.md: plain ws on shared wifi is an accepted trade-off;
+     bring your own AP). WAN deployments use https and are unaffected. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

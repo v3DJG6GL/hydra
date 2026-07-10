@@ -78,6 +78,40 @@ For kiosk setups the pairing can be pinned in the renderer URL instead:
 `http://localhost:8080/?vjroom=<room>&vjtoken=<token>` (both persist to
 localStorage, so subsequent plain loads keep them).
 
+### Pairing a TV / display (short code)
+
+A renderer loaded with `?display=1` (the Android TV app, or any browser you
+point at that URL) that has no credentials shows a **pairing code** like
+`ABCD-2345` instead of a QR. On a paired deck: toprail QR button → **LINK A
+TV / DISPLAY** → type the code → APPROVE (optionally *require OK on the TV*).
+The display then receives its own credential: render-only (it can never act
+as a deck), individually revocable from the same overlay (PAIRED DISPLAYS →
+UNPAIR) without rotating anything else.
+
+Unlike the deck QR, the code is safe on a projected screen: single-use,
+expires after 10 minutes (relay clock), and approval is bound to the exact
+socket showing it — a photo of the wall redeems nothing.
+
+One display renders at a time: the newest renderer in a room wins (same rule
+as always). A display that gets replaced shows a "press OK to reclaim"
+overlay rather than going dark. See docs/android-tv.md for the TV app.
+
+### FFT sources (a.fft away from the renderer's mic)
+
+Displays usually have no usable mic, so `a.fft` can come from three places —
+pick via right-click/long-press on the deck's ∿ FFT button:
+
+- **a deck's mic**: hit **∿ MIC** in the deck toprail; that deck captures and
+  streams the bins (secure context required on the deck: https or localhost).
+- **the display's own mic** (Android TV app): native capture, works on plain
+  http, reaches built-in projector mics and USB mics.
+- **the renderer's mic**: the classic behavior.
+
+`auto` prefers deck → display → renderer among sources actually delivering,
+and `a.setSmooth()/setCutoff()/setScale()/setBins()` follow the active
+source, so sketches behave identically everywhere. Other decks' FFT meters
+show whichever source is live.
+
 ## LAN mode vs WAN mode — one build, don't mix them
 
 - **LAN / offline** (no venue internet needed): the Pi runs the compose stack
@@ -259,6 +293,13 @@ variables on the relay service (see *Customizing the deployment*).
   sketch (CSS upscales) and hydra's `fps: 30` are the two biggest levers.
 - A systemd watchdog that restarts Chromium if it exits is worth having;
   WebGL context loss on an overheating Pi has no in-page recovery.
+
+## Android TV / projector as the display
+
+An Android TV device can be the renderer instead of (or alternating with)
+the Pi: the `android/` app wraps the `?display=1` page in a kiosk shell with
+watchdogs, boot autostart, short-code pairing and native TV-mic audio
+reactivity. Full guide: **docs/android-tv.md**.
 
 ## Security model, in one paragraph
 

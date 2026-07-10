@@ -126,8 +126,13 @@ export function showReplacedOverlay() {
     hint.style.cssText = 'font-size:2.2vmin;opacity:.7;'
     wrap.append(title, hint)
     document.body.appendChild(wrap)
+    // survive choo's <body> morphing (it removes foreign nodes on render)
+    const remount = setInterval(() => {
+        if (!wrap.isConnected) document.body.appendChild(wrap)
+    }, 400)
     const onKey = (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
+            clearInterval(remount)
             document.removeEventListener('keydown', onKey)
             window.location.reload()
         }
