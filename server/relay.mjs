@@ -55,7 +55,8 @@ const timingSafeEq = (a, b) => {
 //   HYDRA_PREVIEW_RTC_KBPS      WebRTC sender bitrate cap
 //   HYDRA_PREVIEW_FRAME_KBPS    relayed-frames rate budget (KB/s on the wire)
 //   HYDRA_PREVIEW_FRAME_WIDTH   preview resolution ceiling (both paths)
-//   HYDRA_PREVIEW_MIN_FRAME_MS  fastest frame cadence
+//   HYDRA_PREVIEW_MIN_FRAME_MS  min gap between fallback-mode snapshots,
+//                               i.e. the frames path's top speed (350≈3fps)
 //   HYDRA_PREVIEW_LAN_* / HYDRA_PREVIEW_WAN_*  mode-scoped variants; a
 //   scoped var beats the unscoped one for renderers in that mode
 const previewCfg = (env, scope) => {

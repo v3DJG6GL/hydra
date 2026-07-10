@@ -45,7 +45,10 @@ The design behind all of this is in [remote-deck-plan.md](remote-deck-plan.md).
   - `HYDRA_PREVIEW_RTC_KBPS` — WebRTC sender bitrate cap (default 1200 WAN / 6000 LAN)
   - `HYDRA_PREVIEW_FRAME_KBPS` — relayed-frames rate budget in KB/s (default 150 / 400)
   - `HYDRA_PREVIEW_FRAME_WIDTH` — resolution ceiling for both paths (default 480 / 720)
-  - `HYDRA_PREVIEW_MIN_FRAME_MS` — fastest frame cadence (default 350)
+  - `HYDRA_PREVIEW_MIN_FRAME_MS` — minimum gap between two frames in the
+    frames-fallback mode, i.e. its top speed: 350 ms ≈ 3 fps, 200 ≈ 5 fps
+    (default 350; the gap auto-stretches beyond it for heavy sketches, and
+    the WebRTC video path is unaffected)
 
   Each also exists as a mode-scoped variant — `HYDRA_PREVIEW_LAN_*` /
   `HYDRA_PREVIEW_WAN_*` — for a stack that serves both modes (LAN http plus
