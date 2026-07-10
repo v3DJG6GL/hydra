@@ -277,6 +277,36 @@ export default function remoteStore(state, emitter) {
     let frameTimer = null
     let frameBusy = false
 
+    // high-entropy sketches (voronoi at high frequency…) are the bandwidth
+    // worst case on both preview paths — cap them to preview-pane budgets:
+    // the deck shows ~480px, anything beyond that is wasted uplink
+    const RTC_MAX_KBPS = 800
+    const FRAME_BUDGET = 28000 // data-URL chars ≈ 21KB wire ≈ 60KiB/s at 3fps
+    // noise barely responds to quality (entropy dominates) — resolution is
+    // the lever that actually bites, so the tiers go low
+    const FRAME_WIDTHS = [480, 360, 288, 224, 176]
+    let frameQ = 0.55
+    let frameTier = 0
+
+    // best-effort sender cap — a UA without populated encodings just stays
+    // uncapped, exactly as before
+    const capPreviewSenders = (pc) => {
+        pc.getSenders().forEach((sender) => {
+            if (!sender.track) return
+            try {
+                const prm = sender.getParameters()
+                if (!prm.encodings || !prm.encodings.length) return
+                const w = sender.track.getSettings ? (sender.track.getSettings().width || 0) : 0
+                prm.encodings.forEach((enc) => {
+                    enc.maxBitrate = RTC_MAX_KBPS * 1000
+                    if (w > 640) enc.scaleResolutionDownBy = w / 480
+                })
+                prm.degradationPreference = 'maintain-framerate'
+                sender.setParameters(prm).catch(() => { /* caps rejected — uncapped */ })
+            } catch (e) { /* getParameters unsupported */ }
+        })
+    }
+
     const stopRtc = (deckId) => {
         const pc = pcs.get(deckId)
         if (pc) {
@@ -299,12 +329,16 @@ export default function remoteStore(state, emitter) {
         } catch (e) { return }
         pcs.set(deckId, pc)
         try {
-            stream.getTracks().forEach((t) => pc.addTrack(t, stream))
+            stream.getTracks().forEach((t) => {
+                try { t.contentHint = 'motion' } catch (e) { /* hint unsupported */ }
+                pc.addTrack(t, stream)
+            })
             pc.onicecandidate = (e) => {
                 if (e.candidate) to(deckId, { t: 'rtc', kind: 'candidate', candidate: e.candidate })
             }
             const offer = await pc.createOffer()
             await pc.setLocalDescription(offer)
+            capPreviewSenders(pc)
             to(deckId, { t: 'rtc', kind: 'offer', sdp: pc.localDescription.sdp })
         } catch (e) {
             stopRtc(deckId)
@@ -350,11 +384,23 @@ export default function remoteStore(state, emitter) {
                 img.onload = () => {
                     try {
                         const c = document.createElement('canvas')
-                        const w = 480
+                        const w = FRAME_WIDTHS[frameTier]
                         c.width = w
                         c.height = Math.max(1, Math.round(w * img.height / img.width))
                         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
-                        const data = c.toDataURL(frameMime, 0.55)
+                        const data = c.toDataURL(frameMime, frameQ)
+                        // feedback toward the budget: big overshoots drop a
+                        // resolution tier straight away, small ones trim
+                        // quality — and back up when the sketch calms down
+                        if (data.length > FRAME_BUDGET) {
+                            const canDrop = frameTier < FRAME_WIDTHS.length - 1
+                            if (canDrop && data.length > FRAME_BUDGET * 1.8) frameTier++
+                            else if (frameQ > 0.3) frameQ = Math.max(0.3, frameQ - 0.07)
+                            else if (canDrop) frameTier++
+                        } else if (data.length < FRAME_BUDGET * 0.45 && (frameQ < 0.55 || frameTier > 0)) {
+                            if (frameQ < 0.55) frameQ = Math.min(0.55, frameQ + 0.04)
+                            else { frameTier--; frameQ = 0.45 }
+                        }
                         frameSubs.forEach((id) => to(id, { t: 'frame', data }))
                     } catch (e) { /* canvas hiccup — drop the frame */ }
                     URL.revokeObjectURL(url)
