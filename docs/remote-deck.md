@@ -86,8 +86,9 @@ localStorage, so subsequent plain loads keep them).
 ## Touch gestures (phones and tablets)
 
 The deck reshapes itself on phone widths — the top rail wraps into a
-transport row and a toggles row, and the scene bank becomes a 4×2 pad
-grid with the export/import/cycle tools underneath. Everything a
+transport row and a toggles row, and the scene bank becomes a pad grid
+(4 per row, wrapping as the bank grows) with the export/import/cycle
+tools underneath. Everything a
 right-click does on the desktop lives behind a **long-press** on touch:
 
 - **Long-press** a scene pad, fader, or sequencer cell for its menu

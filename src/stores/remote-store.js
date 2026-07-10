@@ -225,6 +225,12 @@ export default function remoteStore(state, emitter) {
             case 'sceneClear':
                 p.clearScene(msg.i | 0)
                 return
+            case 'sceneAdd':
+                p.addScene()
+                return
+            case 'sceneRemove':
+                p.removeScene(msg.i | 0)
+                return
             case 'sceneMove':
                 p.moveScene(msg.from | 0, msg.to | 0)
                 return

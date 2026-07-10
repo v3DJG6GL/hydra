@@ -486,6 +486,14 @@ export default class RemoteHost {
         this._send({ op: 'sceneClear', i })
     }
 
+    sceneAdd() {
+        this._send({ op: 'sceneAdd' })
+    }
+
+    sceneRemove(i) {
+        this._send({ op: 'sceneRemove', i })
+    }
+
     sceneMove(from, to) {
         this._send({ op: 'sceneMove', from, to })
     }

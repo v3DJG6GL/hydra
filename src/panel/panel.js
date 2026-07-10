@@ -11,7 +11,7 @@ import { grouped, fmtNumber, fmtShort, INT_PARAMS } from './metadata.js'
 import { edits } from './patcher.js'
 import LocalHost from './host-local.js'
 import MidiControl from './midi.js'
-import { loadCycleSecs, saveCycleSecs } from './scenes.js'
+import { loadCycleSecs, saveCycleSecs, SLOT_COUNT } from './scenes.js'
 import { openPopup, STYLE_MATCH } from './popup.js'
 
 const CHANNEL_CLASS = { o0: 'ch-o0', o1: 'ch-o1', o2: 'ch-o2', o3: 'ch-o3' }
@@ -396,9 +396,15 @@ export default class VJPanel {
             } else if (scene) {
                 slot.appendChild(el(d, 'span', 'vj-scene-code', scene.code.replace(/\s+/g, ' ').slice(0, 18)))
             }
+            // only the first 8 slots have keyboard shortcuts — don't promise
+            // keys the later slots can't deliver
             slot.title = scene
-                ? this.tr('panel.scene-recall', 'recall scene (key 1-8) — shift+click overwrites, drag to reorder, right-click for menu')
-                : this.tr('panel.scene-save', 'save current sketch here (shift+1-8) — right-click for menu')
+                ? (i < 8
+                    ? this.tr('panel.scene-recall', 'recall scene (key 1-8) — shift+click overwrites, drag to reorder, right-click for menu')
+                    : this.tr('panel.scene-recall-nokey', 'recall scene — shift+click overwrites, drag to reorder, right-click for menu'))
+                : (i < 8
+                    ? this.tr('panel.scene-save', 'save current sketch here (shift+1-8) — right-click for menu')
+                    : this.tr('panel.scene-save-nokey', 'save current sketch here — right-click for menu'))
             slot.onclick = (e) => {
                 if (!scene || e.shiftKey) this.saveScene(i)
                 else this.recallScene(i)
@@ -410,6 +416,14 @@ export default class VJPanel {
             this.attachSceneDrag(slot, i, !!scene)
             strip.appendChild(slot)
         })
+
+        // + tile: the bank has no fixed size — save the current sketch into
+        // a brand-new slot at the end
+        const add = el(d, 'button', 'vj-scene vj-scene-add')
+        add.appendChild(el(d, 'span', 'vj-scene-add-glyph', '+'))
+        add.title = this.tr('panel.scene-add', 'save current sketch as a new scene (adds a slot)')
+        add.onclick = () => this.addScene()
+        strip.appendChild(add)
 
         const tools = el(d, 'div', 'vj-scenes-tools')
         const exp = el(d, 'button', 'vj-scenetool')
@@ -488,6 +502,10 @@ export default class VJPanel {
             }
             items.push({ label: this.tr('panel.scene-clear', 'clear slot'), fn: () => this.clearScene(i), danger: true })
         }
+        // added slots can be dropped again once empty (the base row stays)
+        if (!scene && this.scenes.length > SLOT_COUNT) {
+            items.push({ label: this.tr('panel.scene-remove', 'remove slot'), fn: () => this.removeScene(i), danger: true })
+        }
         if (!items.length) return
         this.openPopover(d, root, anchor, (pop) => {
             items.forEach((item) => {
@@ -557,6 +575,14 @@ export default class VJPanel {
 
     saveScene(i) {
         this.host.sceneSave(i)
+    }
+
+    addScene() {
+        this.host.sceneAdd()
+    }
+
+    removeScene(i) {
+        this.host.sceneRemove(i)
     }
 
     recallScene(i, opts) {

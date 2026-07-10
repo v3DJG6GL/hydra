@@ -9,6 +9,7 @@ export default {
                 shuffle: "show random sketch (ctrl+shift+e)",
                 random: "make random change (ctrl+shift+x)",
                 panel: "VJ control panel (ctrl+shift+y)",
+                "pair-page": "pair a tablet / phone: QR code + deck link (keep it off the projector)",
                 "load-extension": "load library or extension",
                 "show-info": "show info window",
                 "hide-info": "hide info window"
@@ -62,6 +63,10 @@ export default {
                 'raw-hint': 'not chain-editable — click to edit in the code',
                 'scene-recall': 'recall scene (key 1-8) — shift+click overwrites, drag to reorder, right-click for menu',
                 'scene-save': 'save current sketch here (shift+1-8) — right-click for menu',
+                'scene-recall-nokey': 'recall scene — shift+click overwrites, drag to reorder, right-click for menu',
+                'scene-save-nokey': 'save current sketch here — right-click for menu',
+                'scene-add': 'save current sketch as a new scene (adds a slot)',
+                'scene-remove': 'remove slot',
                 'scene-clear': 'clear slot',
                 'scenes-export': 'export the scene bank as a json file',
                 'scenes-import': 'import a scene bank json file (replaces all slots)',

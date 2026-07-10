@@ -10,7 +10,7 @@
 import { applyEdit, applyQuietEdit } from './patcher.js'
 import LiveBind from './live-bind.js'
 import { getTransforms } from './metadata.js'
-import { loadScenes, saveScenes, captureThumb, SLOT_COUNT } from './scenes.js'
+import { loadScenes, saveScenes, captureThumb, normalizeScenes, SLOT_COUNT } from './scenes.js'
 
 export default class LocalHost {
     constructor(state, emit) {
@@ -240,20 +240,32 @@ export default class LocalHost {
     }
 
     sceneMove(from, to) {
-        if (from === to || from < 0 || from >= SLOT_COUNT || !this.scenes[from]) return
+        if (from === to || from < 0 || from >= this.scenes.length || !this.scenes[from]) return
         const [moved] = this.scenes.splice(from, 1)
         this.scenes.splice(to, 0, moved)
         saveScenes(this.scenes)
         this._fire('scenes-changed')
     }
 
+    // the + tile: grow the bank by one slot and save the current sketch there
+    sceneAdd() {
+        if (!this.cm) return
+        this.scenes.push(null)
+        this.sceneSave(this.scenes.length - 1)
+    }
+
+    // drop a slot entirely (empty slots only, and never below the base row)
+    sceneRemove(i) {
+        if (this.scenes.length <= SLOT_COUNT || this.scenes[i] || i < 0 || i >= this.scenes.length) return
+        this.scenes.splice(i, 1)
+        saveScenes(this.scenes)
+        this._fire('scenes-changed')
+    }
+
     // replaces the whole bank (import); accepts anything json-shaped and
-    // normalizes it to SLOT_COUNT {code, thumb, savedAt} slots
+    // normalizes it to {code, thumb, savedAt} slots (at least SLOT_COUNT)
     sceneReplaceAll(arr) {
-        this.scenes = arr.slice(0, SLOT_COUNT).map((s) => s && typeof s.code === 'string'
-            ? { code: s.code, thumb: typeof s.thumb === 'string' ? s.thumb : null, savedAt: s.savedAt || Date.now() }
-            : null)
-        while (this.scenes.length < SLOT_COUNT) this.scenes.push(null)
+        this.scenes = normalizeScenes(arr)
         saveScenes(this.scenes)
         this._fire('scenes-changed')
     }

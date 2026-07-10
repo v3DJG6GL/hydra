@@ -220,6 +220,20 @@
   box-shadow: 0 0 0 1px var(--vj-armed) inset;
 }
 
+.vj-scene-add {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.vj-scene-add-glyph {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--vj-dim);
+}
+.vj-scene-add:hover .vj-scene-add-glyph { color: var(--vj-armed); }
+
 .vj-scene-thumb {
   position: absolute;
   inset: 0;
@@ -1178,11 +1192,12 @@
   .vj-toprail { flex-wrap: wrap; gap: 4px 8px; padding: 6px 8px; }
   .vj-toprail .vj-railbreak { display: block; flex: 1 0 100%; height: 0; }
 
-  /* scene bank becomes a pad grid: 4 per row, all 8 visible, no scrolling.
-     the tools drop into their own slim row underneath */
+  /* scene bank becomes a pad grid: 4 per row, wrapping as the bank grows,
+     no scrolling. fixed quarter width so a partial last row (or the + tile
+     alone) doesn't stretch. the tools drop into their own slim row underneath */
   .vj-scenes { flex-wrap: wrap; gap: 6px; padding: 8px; }
   .vj-scene {
-    flex: 1 1 calc(25% - 5px);
+    flex: 0 0 calc(25% - 5px);
     width: auto;
     height: auto;
     aspect-ratio: 16 / 10;

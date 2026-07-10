@@ -1,19 +1,25 @@
-// Scene banks: 8 localStorage slots holding {code, thumb, savedAt}.
+// Scene banks: localStorage slots holding {code, thumb, savedAt}. The bank
+// grows on demand (the + tile appends a slot) but never shrinks below
+// SLOT_COUNT, so the familiar 1-8 key row is always on screen.
 // Thumbnails come from hydra's getScreenImage (captured inside the render
 // tick, so never a blank frame from the non-preserved WebGL buffer).
 const KEY = 'hydra-vj-scenes'
 export const SLOT_COUNT = 8
+
+export function normalizeScenes(arr) {
+    const out = arr.map((s) => s && typeof s.code === 'string'
+        ? { code: s.code, thumb: typeof s.thumb === 'string' ? s.thumb : null, savedAt: s.savedAt || Date.now() }
+        : null)
+    while (out.length < SLOT_COUNT) out.push(null)
+    return out
+}
 const THUMB_W = 96
 const THUMB_H = 54
 
 export function loadScenes() {
     try {
         const arr = JSON.parse(localStorage.getItem(KEY))
-        if (Array.isArray(arr)) {
-            const out = arr.slice(0, SLOT_COUNT)
-            while (out.length < SLOT_COUNT) out.push(null)
-            return out
-        }
+        if (Array.isArray(arr)) return normalizeScenes(arr)
     } catch (e) { /* corrupted storage -> fresh bank */ }
     return new Array(SLOT_COUNT).fill(null)
 }
