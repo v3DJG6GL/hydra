@@ -33,7 +33,9 @@ services:
     # user: "568:568"
     # Live-preview bandwidth budgets, pushed to the renderer on connect.
     # Unset vars keep the mode defaults (WAN https: 1200/150/480 — LAN http:
-    # 6000/400/720). See docs/remote-deck.md.
+    # 6000/400/720). Prefix LAN_/WAN_ to scope a var to one mode when the
+    # same stack serves both (e.g. HYDRA_PREVIEW_WAN_FRAME_KBPS). See
+    # docs/remote-deck.md.
     # environment:
     #   HYDRA_PREVIEW_RTC_KBPS: "1200"    # WebRTC sender cap (kbit/s)
     #   HYDRA_PREVIEW_FRAME_KBPS: "150"   # relayed-frames budget (KB/s)

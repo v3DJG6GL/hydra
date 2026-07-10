@@ -50,20 +50,25 @@ const timingSafeEq = (a, b) => {
 // Preview bandwidth budgets, pushed to the renderer in its welcome. Unset
 // vars leave the page's own mode-based defaults (LAN generous / WAN tight)
 // alone — only explicitly set values override, clamped to sane ranges.
+// A single stack can serve both modes (LAN http + a TLS proxy in front):
+// the renderer's Origin scheme picks the scope, so limits can differ.
 //   HYDRA_PREVIEW_RTC_KBPS      WebRTC sender bitrate cap
 //   HYDRA_PREVIEW_FRAME_KBPS    relayed-frames rate budget (KB/s on the wire)
 //   HYDRA_PREVIEW_FRAME_WIDTH   preview resolution ceiling (both paths)
 //   HYDRA_PREVIEW_MIN_FRAME_MS  fastest frame cadence
-const previewCfg = (env) => {
-    const pick = (name, lo, hi) => {
-        const v = parseInt(env[name], 10)
+//   HYDRA_PREVIEW_LAN_* / HYDRA_PREVIEW_WAN_*  mode-scoped variants; a
+//   scoped var beats the unscoped one for renderers in that mode
+const previewCfg = (env, scope) => {
+    const pick = (key, lo, hi) => {
+        const scoped = env['HYDRA_PREVIEW_' + scope + '_' + key]
+        const v = parseInt(scoped !== undefined ? scoped : env['HYDRA_PREVIEW_' + key], 10)
         return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : undefined
     }
     const cfg = {
-        rtcKbps: pick('HYDRA_PREVIEW_RTC_KBPS', 100, 50000),
-        frameKbps: pick('HYDRA_PREVIEW_FRAME_KBPS', 20, 5000),
-        frameWidth: pick('HYDRA_PREVIEW_FRAME_WIDTH', 160, 1920),
-        minFrameMs: pick('HYDRA_PREVIEW_MIN_FRAME_MS', 100, 2000)
+        rtcKbps: pick('RTC_KBPS', 100, 50000),
+        frameKbps: pick('FRAME_KBPS', 20, 5000),
+        frameWidth: pick('FRAME_WIDTH', 160, 1920),
+        minFrameMs: pick('MIN_FRAME_MS', 100, 2000)
     }
     Object.keys(cfg).forEach((k) => { if (cfg[k] === undefined) delete cfg[k] })
     return Object.keys(cfg).length ? cfg : null
@@ -74,7 +79,10 @@ export function attachRelay(httpServer, opts = {}) {
     const dataDir = opts.dataDir || process.env.HYDRA_RELAY_DATA_DIR || './vj-data'
     const allowedOrigins = (opts.allowedOrigins || process.env.HYDRA_RELAY_ALLOWED_ORIGINS || '')
         .split(',').map((s) => s.trim()).filter(Boolean)
-    const preview = opts.preview !== undefined ? opts.preview : previewCfg(process.env)
+    const preview = {
+        lan: opts.preview !== undefined ? opts.preview : previewCfg(process.env, 'LAN'),
+        wan: opts.preview !== undefined ? opts.preview : previewCfg(process.env, 'WAN')
+    }
     const log = opts.quiet ? () => {} : (...a) => console.log('[vj-relay]', ...a)
 
     try { fs.mkdirSync(dataDir, { recursive: true }) } catch (e) { /* read-only fs: persistence off */ }
@@ -140,10 +148,12 @@ export function attachRelay(httpServer, opts = {}) {
         wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
     })
 
-    wss.on('connection', (ws) => {
+    wss.on('connection', (ws, req) => {
         ws.isAlive = true
         ws.on('pong', () => { ws.isAlive = true })
         ws.vj = null // set after a valid hello
+        // https page = WAN mode, plain http = LAN — scopes the preview budgets
+        ws.mode = String((req && req.headers.origin) || '').startsWith('https') ? 'wan' : 'lan'
 
         const helloTimer = setTimeout(() => { if (!ws.vj) refuse(ws, 'hello-timeout') }, HELLO_TIMEOUT_MS)
 
@@ -179,7 +189,7 @@ export function attachRelay(httpServer, opts = {}) {
                         hostPresent: true,
                         deckCount: room.decks.size,
                         persistedScenes: loadPersisted(msg.room),
-                        ...(preview ? { preview } : {})
+                        ...(preview[ws.mode] ? { preview: preview[ws.mode] } : {})
                     })
                     room.decks.forEach((deck) => send(deck, { t: 'hostState', present: true }))
                     log(`host ${id} up in ${msg.room} (${room.decks.size} decks waiting)`)

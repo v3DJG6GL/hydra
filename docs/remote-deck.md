@@ -47,7 +47,12 @@ The design behind all of this is in [remote-deck-plan.md](remote-deck-plan.md).
   - `HYDRA_PREVIEW_FRAME_WIDTH` — resolution ceiling for both paths (default 480 / 720)
   - `HYDRA_PREVIEW_MIN_FRAME_MS` — fastest frame cadence (default 350)
 
-  For `npm run dev` the same vars work as plain environment variables.
+  Each also exists as a mode-scoped variant — `HYDRA_PREVIEW_LAN_*` /
+  `HYDRA_PREVIEW_WAN_*` — for a stack that serves both modes (LAN http plus
+  a TLS proxy in front): the renderer's scheme picks the scope, and a scoped
+  var beats the unscoped one. Separate LAN and WAN deployments don't need
+  this — just configure each relay. For `npm run dev` the same vars work as
+  plain environment variables.
 
 ## Pairing
 
