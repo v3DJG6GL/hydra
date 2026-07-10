@@ -164,6 +164,19 @@ the grip to reset. The chosen size is remembered per device — and reported
 to the renderer, which sizes its stream to the largest connected pane so a
 big pane also means a *sharper* preview (within the budgets below).
 
+The **OSD** button on the left of the grip bar toggles a signal-status
+readout in the pane's corner, like a broadcast monitor's on-screen display:
+the active path (amber `● FRAMES` = relayed snapshots with their image
+format, green `● WEBRTC P2P` = live video with its codec), the measured
+resolution, framerate and bandwidth, plus the LAN/WAN mode, the P2P
+negotiation state (`checking` / `connected` / `live` / `failed` — handy for
+seeing whether WebRTC made it through a venue NAT) and the pixel width this
+pane requested from the renderer. Bandwidth is shown in the units of the
+matching budget — kb/s on the WebRTC line (`HYDRA_PREVIEW_RTC_KBPS`), KB/s
+on the frames line (`HYDRA_PREVIEW_FRAME_KBPS`) — so the overlay doubles as
+the live readout when tuning those variables. The toggle is remembered per
+device.
+
 Preview bandwidth is budgeted on both paths and degrades in
 perceived-quality order — sharpness matters more than motion on a preview,
 so dense sketches (high-frequency `voronoi` is essentially noise, the worst

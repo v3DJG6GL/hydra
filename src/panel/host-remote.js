@@ -57,6 +57,7 @@ export default class RemoteHost {
         this._liveTimer = null
         this._backoff = BACKOFF_MIN
         this._closed = false
+        try { this._statsOn = localStorage.getItem('hydra-vj-preview-diag') === '1' } catch (e) { this._statsOn = false }
         this._connect()
     }
 
@@ -113,6 +114,10 @@ export default class RemoteHost {
 
     close() {
         this._closed = true
+        if (this._statsTimer) {
+            clearInterval(this._statsTimer)
+            this._statsTimer = null
+        }
         if (this.ws) try { this.ws.close() } catch (e) { /* already dead */ }
     }
 
@@ -223,6 +228,11 @@ export default class RemoteHost {
                 if (this._previewImg && this._framesMode) {
                     this._previewImg.src = msg.data
                     this._setPreviewMode('frames')
+                    // data-URL chars ≈ wire bytes — feeds the OSD readout
+                    const now = performance.now()
+                    const log = this._frameLog || (this._frameLog = [])
+                    log.push({ t: now, b: msg.data.length })
+                    while (log.length && now - log[0].t > 5000) log.shift()
                 }
                 return
             case 'fftFrame':
@@ -349,6 +359,7 @@ export default class RemoteHost {
             this._closePc()
             if (this._previewVideo) this._previewVideo.srcObject = null
         }
+        this._syncStats()
     }
 
     _kickPreview() {
@@ -386,10 +397,15 @@ export default class RemoteHost {
             img.style.display = 'none'
             wrap.appendChild(video)
             wrap.appendChild(img)
+            const stats = doc.createElement('div')
+            stats.className = 'vj-preview-stats'
+            stats.style.display = 'none'
+            wrap.appendChild(stats)
             wrap.appendChild(this._buildPreviewGrip(doc))
             this._previewWrap = wrap
             this._previewVideo = video
             this._previewImg = img
+            this._statsEl = stats
             try {
                 const stored = parseInt(localStorage.getItem('hydra-vj-preview-h'), 10)
                 if (Number.isFinite(stored)) this._prevH = stored
@@ -400,6 +416,7 @@ export default class RemoteHost {
         }
         const p = this._previewVideo.play()
         if (p && p.catch) p.catch(() => { /* resumes on autoplay */ })
+        this._syncStats()
         return this._previewWrap
     }
 
@@ -426,8 +443,18 @@ export default class RemoteHost {
             this._setPreviewH(next, true)
         }
         grip.appendChild(size)
+        const diag = doc.createElement('button')
+        diag.className = 'vj-preview-diag' + (this._statsOn ? ' vj-on' : '')
+        diag.textContent = 'OSD'
+        diag.title = 'toggle stream diagnostics'
+        diag.onclick = (e) => {
+            e.stopPropagation()
+            this._toggleStats()
+        }
+        grip.appendChild(diag)
+        this._diagBtn = diag
         grip.onpointerdown = (e) => {
-            if (e.target === size) return
+            if (e.target === size || e.target === diag) return
             e.preventDefault()
             try { grip.setPointerCapture(e.pointerId) } catch (err) { /* stale pointer */ }
             const startY = e.clientY
@@ -470,6 +497,102 @@ export default class RemoteHost {
         if (!this._previewVideo) return
         this._previewVideo.style.display = mode === 'rtc' ? '' : 'none'
         this._previewImg.style.display = mode === 'frames' ? '' : 'none'
+    }
+
+    // ---- stream diagnostics: the OSD button on the grip toggles a
+    // signal-status readout in the pane's corner — active path, measured
+    // resolution / fps / bandwidth, LAN|WAN mode and the P2P link state.
+    // Bandwidth is shown in the units of the matching HYDRA_PREVIEW_*
+    // budget (kb/s for WebRTC, KB/s for frames) so it doubles as the
+    // tuning readout. The toggle is per-device (localStorage).
+
+    _toggleStats() {
+        this._statsOn = !this._statsOn
+        try {
+            if (this._statsOn) localStorage.setItem('hydra-vj-preview-diag', '1')
+            else localStorage.removeItem('hydra-vj-preview-diag')
+        } catch (e) { /* private mode */ }
+        this._syncStats()
+    }
+
+    _syncStats() {
+        if (this._diagBtn) this._diagBtn.classList.toggle('vj-on', !!this._statsOn)
+        const on = !!(this._statsOn && this._previewOn && this._statsEl)
+        if (this._statsEl) this._statsEl.style.display = on ? '' : 'none'
+        if (on && !this._statsTimer) {
+            this._statsTimer = setInterval(() => this._updateStats(), 1000)
+            this._updateStats()
+        } else if (!on && this._statsTimer) {
+            clearInterval(this._statsTimer)
+            this._statsTimer = null
+            this._rtcPrev = null
+        }
+    }
+
+    _updateStats() {
+        const el = this._statsEl
+        if (!el) return
+        const linkLine = () => {
+            const net = window.location.protocol === 'https:' ? 'WAN' : 'LAN'
+            const pc = this._pc
+            const p2p = this._rtcLive ? 'live'
+                : !window.RTCPeerConnection ? 'n/a'
+                    : !pc ? '—'
+                        : ({
+                            new: 'checking',
+                            checking: 'checking',
+                            connected: 'connected',
+                            completed: 'connected',
+                            disconnected: 'lost'
+                        })[pc.iceConnectionState] || pc.iceConnectionState
+            return net + ' · p2p ' + p2p + ' · pane ' + this._previewPx() + 'px'
+        }
+        if (this._mode === 'rtc' && this._pc) {
+            const pc = this._pc
+            pc.getStats().then((stats) => {
+                if (this._statsEl !== el || this._pc !== pc || !this._statsTimer) return
+                let inb = null
+                stats.forEach((s) => { if (s.type === 'inbound-rtp' && s.kind === 'video') inb = s })
+                const c = inb && inb.codecId ? stats.get(inb.codecId) : null
+                const codec = c && c.mimeType ? c.mimeType.split('/').pop().toUpperCase() : ''
+                const now = performance.now()
+                const prev = this._rtcPrev
+                let fps = '… fps'
+                let kbps = '… kb/s'
+                if (inb && prev && now > prev.t) {
+                    kbps = Math.max(0, Math.round((inb.bytesReceived - prev.bytes) * 8 / (now - prev.t))) + ' kb/s'
+                    fps = Math.max(0, Math.round((inb.framesDecoded - prev.frames) * 1000 / (now - prev.t))) + ' fps'
+                }
+                if (inb) this._rtcPrev = { t: now, bytes: inb.bytesReceived || 0, frames: inb.framesDecoded || 0 }
+                const res = inb && inb.frameWidth ? inb.frameWidth + '×' + inb.frameHeight : '…'
+                this._renderStats(el, 'rtc', '● WEBRTC P2P' + (codec ? ' · ' + codec : ''),
+                    res + ' · ' + fps + ' · ' + kbps, linkLine())
+            }).catch(() => { /* pc died mid-poll */ })
+        } else {
+            this._rtcPrev = null
+            const now = performance.now()
+            const log = this._frameLog || []
+            while (log.length && now - log[0].t > 5000) log.shift()
+            const span = log.length ? Math.max(1000, now - log[0].t) : 0
+            const fps = span ? Math.round(log.length * 10000 / span) / 10 : 0
+            const kBs = span ? Math.round(log.reduce((s, f) => s + f.b, 0) / span) : 0
+            const img = this._previewImg
+            const res = img && img.naturalWidth ? img.naturalWidth + '×' + img.naturalHeight : '…'
+            const fmt = img && img.src.startsWith('data:image/')
+                ? img.src.slice(11, img.src.indexOf(';')).toUpperCase() : ''
+            this._renderStats(el, 'frames', '● FRAMES' + (fmt ? ' · ' + fmt : ''),
+                res + ' · ' + fps + ' fps · ' + kBs + ' KB/s', linkLine())
+        }
+    }
+
+    _renderStats(el, path, l1, l2, l3) {
+        const d = el.ownerDocument
+        while (el.children.length < 3) el.appendChild(d.createElement('div'))
+        el.children[0].className = 'vj-osd-path ' + (path === 'rtc' ? 'vj-osd-rtc' : 'vj-osd-frames')
+        el.children[0].textContent = l1
+        el.children[1].textContent = l2
+        el.children[2].className = 'vj-osd-dim'
+        el.children[2].textContent = l3
     }
 
     _onRtc(msg) {
