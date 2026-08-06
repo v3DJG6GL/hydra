@@ -48,6 +48,20 @@ export function saveCycleSecs(secs) {
     } catch (e) { /* non-fatal */ }
 }
 
+const CYCLE_RANDOM_KEY = 'hydra-vj-cycle-random'
+
+export function loadCycleRandom() {
+    try {
+        return localStorage.getItem(CYCLE_RANDOM_KEY) === '1'
+    } catch (e) { return false }
+}
+
+export function saveCycleRandom(on) {
+    try {
+        localStorage.setItem(CYCLE_RANDOM_KEY, on ? '1' : '0')
+    } catch (e) { /* non-fatal */ }
+}
+
 export function captureThumb(hydra, cb) {
     if (!hydra || typeof hydra.getScreenImage !== 'function') return cb(null)
     let done = false

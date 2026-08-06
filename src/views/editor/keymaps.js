@@ -9,6 +9,7 @@ export default {
     'Shift-Ctrl-H': 'ui: hide all',
     'Shift-Ctrl-S': 'screencap',
     'Shift-Ctrl-E': 'gallery:showExample',
+    'Shift-Ctrl-Space': 'scenes: random',
     'Shift-Ctrl-X': 'editor: randomize',
     'Shift-Ctrl-Y': 'panel: toggle'
 }

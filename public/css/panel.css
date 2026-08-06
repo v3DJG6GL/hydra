@@ -1215,6 +1215,15 @@
   color: var(--vj-dim);
 }
 
+.vj-rangeform .vj-cycle-random {
+  justify-content: flex-start;
+  cursor: pointer;
+}
+
+.vj-rangeform input[type="checkbox"] {
+  width: auto;
+}
+
 .vj-rangeform input {
   width: 76px;
   background: var(--vj-chassis);

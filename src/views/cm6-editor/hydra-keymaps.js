@@ -9,6 +9,7 @@ const keymap = {
     'Shift-Ctrl-h': 'ui: hide all',
     'Shift-Ctrl-s': 'screencap',
     'Shift-Ctrl-e': 'gallery:showExample',
+    'Shift-Ctrl-Space': 'scenes: random',
     'Shift-Ctrl-x': 'editor: randomize',
     'Shift-Ctrl-y': 'panel: toggle'
 }

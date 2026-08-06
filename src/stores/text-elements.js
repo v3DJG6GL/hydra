@@ -108,8 +108,11 @@ export default {
                 'remove-audioset': 'remove this setting (keeps its current value until reload)',
                 'scenes-cycle': 'auto-cycle the saved scenes',
                 'scenes-cycle-pace': 'right-click sets the pace',
+                'scenes-random': 'jump to a random saved scene (key 0 — ctrl+shift+space anywhere)',
                 'cycle-every': 'every (s)',
-                'cycle-set': 'set pace'
+                'cycle-set': 'set pace',
+                'cycle-random': 'random order',
+                'cycle-random-on': 'random order'
             },
             extensions: {
                 'about-extensions': 'Show community extensions for hydra-synth.',

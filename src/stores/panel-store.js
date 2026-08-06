@@ -62,6 +62,12 @@ export default function panelStore(state, emitter) {
         ensure()
     })
 
+    // random saved scene — works even while the deck is closed, so the scene
+    // bank doubles as a "curated shuffle" from the editor
+    emitter.on('scenes: random', () => {
+        ensure().randomScene()
+    })
+
     // any eval that is not our own shadow replaces the running program with
     // one that reads literals again — live bindings must re-arm lazily
     emitter.on('repl: eval', () => {
@@ -76,12 +82,15 @@ export default function panelStore(state, emitter) {
         panel.adopt(win)
     }
 
-    // hotkey also works when the editor is not focused (the CodeMirror keymap
-    // handles it when it is — skip to avoid double-firing)
+    // hotkeys also work when the editor is not focused (the CodeMirror keymap
+    // handles them when it is — skip to avoid double-firing)
     document.addEventListener('keydown', (e) => {
-        if (!e.ctrlKey || !e.shiftKey || (e.key !== 'y' && e.key !== 'Y')) return
+        if (!e.ctrlKey || !e.shiftKey) return
+        const toggle = e.key === 'y' || e.key === 'Y'
+        const random = e.code === 'Space'
+        if (!toggle && !random) return
         if (e.target && e.target.closest && e.target.closest('.CodeMirror')) return
         e.preventDefault()
-        emitter.emit('panel: toggle')
+        emitter.emit(toggle ? 'panel: toggle' : 'scenes: random')
     })
 }

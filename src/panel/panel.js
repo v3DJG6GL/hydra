@@ -11,7 +11,7 @@ import { grouped, fmtNumber, fmtShort, INT_PARAMS } from './metadata.js'
 import { edits } from './patcher.js'
 import LocalHost from './host-local.js'
 import MidiControl from './midi.js'
-import { loadCycleSecs, saveCycleSecs, SLOT_COUNT } from './scenes.js'
+import { loadCycleSecs, saveCycleSecs, loadCycleRandom, saveCycleRandom, SLOT_COUNT } from './scenes.js'
 import { openPopup, STYLE_MATCH } from './popup.js'
 
 const CHANNEL_CLASS = { o0: 'ch-o0', o1: 'ch-o1', o2: 'ch-o2', o3: 'ch-o3' }
@@ -48,7 +48,7 @@ export default class VJPanel {
         this.host = host || new LocalHost(state, emit)
         this.host.bind(this)
         this.host.on('scenes-changed', () => this.renderAll())
-        this.cycle = { on: false, timer: null, secs: loadCycleSecs(), pos: -1 }
+        this.cycle = { on: false, timer: null, secs: loadCycleSecs(), pos: -1, random: loadCycleRandom() }
         this.midi = new MidiControl(this)
         this.fftShown = false
         // knobs mapped in an earlier session should work without re-arming
@@ -436,9 +436,15 @@ export default class VJPanel {
         imp.title = this.tr('panel.scenes-import', 'import a scene bank json file (replaces all slots)')
         imp.onclick = () => this.importScenes(d)
         tools.appendChild(imp)
+        const rnd = el(d, 'button', 'vj-scenetool')
+        rnd.appendChild(el(d, 'i', 'fas fa-dice'))
+        rnd.title = this.tr('panel.scenes-random', 'jump to a random saved scene (key 0 — ctrl+shift+space anywhere)')
+        rnd.onclick = () => this.randomScene()
+        tools.appendChild(rnd)
         const cyc = el(d, 'button', 'vj-scenetool vj-cycle' + (this.cycle.on ? ' vj-on' : ''))
         cyc.appendChild(el(d, 'i', 'fas ' + (this.cycle.on ? 'fa-stop' : 'fa-play')))
-        cyc.title = this.tr('panel.scenes-cycle', 'auto-cycle the saved scenes') + ` (${fmtNumber(this.cycle.secs)}s — ` +
+        cyc.title = this.tr('panel.scenes-cycle', 'auto-cycle the saved scenes') + ` (${fmtNumber(this.cycle.secs)}s` +
+            (this.cycle.random ? ', ' + this.tr('panel.cycle-random-on', 'random order') : '') + ' — ' +
             this.tr('panel.scenes-cycle-pace', 'right-click sets the pace') + ')'
         cyc.onclick = () => this.toggleCycle()
         cyc.oncontextmenu = (e) => {
@@ -462,10 +468,17 @@ export default class VJPanel {
             input.value = fmtNumber(this.cycle.secs)
             label.appendChild(input)
             pop.appendChild(label)
+            const rndLabel = el(d, 'label', 'vj-cycle-random', this.tr('panel.cycle-random', 'random order'))
+            const rndBox = el(d, 'input')
+            rndBox.type = 'checkbox'
+            rndBox.checked = this.cycle.random
+            rndLabel.insertBefore(rndBox, rndLabel.firstChild)
+            pop.appendChild(rndLabel)
             const ok = el(d, 'button', 'vj-menu-item', this.tr('panel.cycle-set', 'set pace'))
             const commit = () => {
                 const v = parseFloat(input.value)
                 if (isFinite(v) && v >= 1) this.setCycleSecs(v)
+                this.setCycleRandom(rndBox.checked)
                 this.closePopover()
                 this.renderAll() // refresh the tooltip
             }
@@ -652,6 +665,11 @@ export default class VJPanel {
         this.renderAll()
     }
 
+    setCycleRandom(on) {
+        this.cycle.random = !!on
+        saveCycleRandom(this.cycle.random)
+    }
+
     setCycleSecs(secs) {
         this.cycle.secs = secs
         saveCycleSecs(secs)
@@ -665,11 +683,30 @@ export default class VJPanel {
         const filled = []
         this.scenes.forEach((s, i) => { if (s) filled.push(i) })
         if (!filled.length) { this.stopCycle(); return }
+        if (this.cycle.random) {
+            this.recallScene(this.pickRandomSlot(filled), { replaceURL: true })
+            return
+        }
         const next = filled.find((i) => i > this.cycle.pos)
         this.recallScene(next !== undefined ? next : filled[0], { replaceURL: true })
     }
 
-    // deck-focus keys: 1-8 recall / shift+1-8 save scenes, ctrl+z / ctrl+shift+z
+    // random pick that never repeats the current scene (unless it is the only one)
+    pickRandomSlot(filled) {
+        const pool = filled.length > 1 ? filled.filter((i) => i !== this.cycle.pos) : filled
+        return pool[Math.floor(Math.random() * pool.length)]
+    }
+
+    // jump to a random saved scene right now (dice button, key 0, ctrl+shift+space)
+    randomScene() {
+        const filled = []
+        this.scenes.forEach((s, i) => { if (s) filled.push(i) })
+        if (!filled.length) return
+        this.recallScene(this.pickRandomSlot(filled), { replaceURL: true })
+    }
+
+    // deck-focus keys: 1-8 recall / shift+1-8 save scenes, 0 random scene,
+    // ctrl+z / ctrl+shift+z
     // (or ctrl+y) undo/redo — only while the deck (dock or popup) has focus
     attachSceneKeys(target) {
         if (!target || target.__vjSceneKeys) return
@@ -680,6 +717,11 @@ export default class VJPanel {
             if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.code === 'KeyZ' || e.code === 'KeyY')) {
                 e.preventDefault()
                 this.historyStep(e.code === 'KeyY' || e.shiftKey ? 'redo' : 'undo')
+                return
+            }
+            if (e.code === 'Digit0' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+                e.preventDefault()
+                this.randomScene()
                 return
             }
             const m = /^Digit([1-8])$/.exec(e.code)
