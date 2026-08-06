@@ -437,7 +437,7 @@ export default class VJPanel {
         imp.onclick = () => this.importScenes(d)
         tools.appendChild(imp)
         const rnd = el(d, 'button', 'vj-scenetool')
-        rnd.appendChild(el(d, 'i', 'fas fa-dice'))
+        rnd.appendChild(el(d, 'i', 'fas fa-dice-five'))
         rnd.title = this.tr('panel.scenes-random', 'jump to a random saved scene (key 0 — ctrl+shift+space anywhere)')
         rnd.onclick = () => this.randomScene()
         tools.appendChild(rnd)
@@ -899,6 +899,13 @@ export default class VJPanel {
             this.deckMutate(true)
         }
         rail.appendChild(dice)
+
+        const rndScene = el(d, 'button', 'vj-railbtn')
+        rndScene.appendChild(el(d, 'i', 'fas fa-dice-five'))
+        rndScene.title = this.tr('panel.scenes-random', 'jump to a random saved scene (key 0 — ctrl+shift+space anywhere)')
+        rndScene.disabled = !this.scenes.some(Boolean)
+        rndScene.onclick = () => this.randomScene()
+        rail.appendChild(rndScene)
 
         const histSize = this.host.historySize()
         const undoBtn = el(d, 'button', 'vj-railbtn')

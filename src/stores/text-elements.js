@@ -8,6 +8,7 @@ export default {
                 clear: "clear all",
                 shuffle: "show random sketch (ctrl+shift+e)",
                 random: "make random change (ctrl+shift+x)",
+                "random-scene": "jump to a random saved scene (ctrl+shift+space)",
                 panel: "VJ control panel (ctrl+shift+y)",
                 "pair-page": "pair a tablet / phone: QR code + deck link (keep it off the projector)",
                 "load-extension": "load library or extension",
