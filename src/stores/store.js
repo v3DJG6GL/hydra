@@ -2,10 +2,24 @@ import repl from './repl-v2.js'
 import { isDisplay } from '../lib/display-mode.js'
 // console.log('ENVIRONMENT IS', process.env.NODE_ENV)
 
+function initialShowCode() {
+  try {
+    const p = new URLSearchParams(window.location.search)
+    const param = p.get('showCode') || p.get('show-code')
+    if (param !== null) return param !== 'false'
+    return localStorage.getItem('hydra-show-code') === '1'
+  } catch (e) {
+    return false
+  }
+}
+
 export default function store(state, emitter) {
   state.showInfo = false
   state.showUI = true
-  state.showCode = !isDisplay() // TV/projector kiosks boot to bare visuals
+  // code overlay: OFF by default (VJ-first) — the deck's CODE button turns it
+  // on and the choice persists; a showCode URL param overrides both.
+  // TV/projector kiosks always boot to bare visuals.
+  state.showCode = !isDisplay() && initialShowCode()
   state.showExtensions = false
   state.errorMessage = ''
   state.isError = false
@@ -74,6 +88,7 @@ export default function store(state, emitter) {
   // hides the editor overlay (code, console, header) but keeps the vj deck
   emitter.on('ui: toggle code', function () {
     state.showCode = !state.showCode
+    try { localStorage.setItem('hydra-show-code', state.showCode ? '1' : '0') } catch (e) { /* private mode */ }
     emitter.emit('render')
   })
 

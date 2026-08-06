@@ -382,8 +382,13 @@ export default class VJPanel {
         const strip = el(d, 'div', 'vj-scenes')
         const current = this.host.hasBuffer() ? this.host.getCode() : null
         this.scenes.forEach((scene, i) => {
+            // cycle.pos is the last recalled/saved slot — a plain code compare
+            // breaks the moment a fader nudges the buffer, so it only serves
+            // as a fallback (e.g. a fresh page load on a scene's URL)
+            const active = scene && (i === this.cycle.pos ||
+                (this.cycle.pos < 0 && current !== null && scene.code === current))
             const slot = el(d, 'button', 'vj-scene' + (scene ? ' vj-filled' : '') +
-                (scene && current !== null && scene.code === current ? ' vj-active' : '') +
+                (active ? ' vj-active' : '') +
                 (this.midi.isSceneMapped(i) ? ' vj-midimapped' : '') +
                 (this.midi.isLearningScene(i) ? ' vj-learning' : ''))
             slot.appendChild(el(d, 'span', 'vj-scene-num', String(i + 1)))
@@ -436,11 +441,6 @@ export default class VJPanel {
         imp.title = this.tr('panel.scenes-import', 'import a scene bank json file (replaces all slots)')
         imp.onclick = () => this.importScenes(d)
         tools.appendChild(imp)
-        const rnd = el(d, 'button', 'vj-scenetool')
-        rnd.appendChild(el(d, 'i', 'fas fa-dice-five'))
-        rnd.title = this.tr('panel.scenes-random', 'jump to a random saved scene (key 0 — ctrl+shift+space anywhere)')
-        rnd.onclick = () => this.randomScene()
-        tools.appendChild(rnd)
         const cyc = el(d, 'button', 'vj-scenetool vj-cycle' + (this.cycle.on ? ' vj-on' : ''))
         cyc.appendChild(el(d, 'i', 'fas ' + (this.cycle.on ? 'fa-stop' : 'fa-play')))
         cyc.title = this.tr('panel.scenes-cycle', 'auto-cycle the saved scenes') + ` (${fmtNumber(this.cycle.secs)}s` +
@@ -587,14 +587,17 @@ export default class VJPanel {
     }
 
     saveScene(i) {
+        this.cycle.pos = i // the saved slot IS what's on screen now
         this.host.sceneSave(i)
     }
 
     addScene() {
+        this.cycle.pos = this.scenes.length // appended slot becomes active
         this.host.sceneAdd()
     }
 
     removeScene(i) {
+        if (i < this.cycle.pos) this.cycle.pos-- // only empty slots can go
         this.host.sceneRemove(i)
     }
 
@@ -606,6 +609,7 @@ export default class VJPanel {
     }
 
     clearScene(i) {
+        if (this.cycle.pos === i) this.cycle.pos = -1
         this.host.sceneClear(i)
     }
 
@@ -640,6 +644,11 @@ export default class VJPanel {
     }
 
     moveScene(from, to) {
+        // keep the highlight (and the cycle) on the same scene after a reorder
+        const p = this.cycle.pos
+        if (p === from) this.cycle.pos = to
+        else if (p > from && p <= to) this.cycle.pos = p - 1
+        else if (p < from && p >= to) this.cycle.pos = p + 1
         this.host.sceneMove(from, to)
     }
 

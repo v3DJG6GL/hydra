@@ -1135,13 +1135,20 @@
   animation: vj-pulse 0.9s ease-in-out infinite;
 }
 
-/* the slot whose code is on screen right now */
+/* the slot whose code is on screen right now — green ring, unmistakable
+   against the red-ish hover */
 .vj-scene.vj-active {
-  border-color: var(--vj-silkscreen);
+  border-color: var(--vj-o1);
+  box-shadow: 0 0 0 1px var(--vj-o1) inset, 0 0 8px rgba(35, 224, 160, 0.45);
+}
+
+.vj-scene.vj-active:hover,
+.vj-scene.vj-filled.vj-active:hover {
+  border-color: var(--vj-o1);
 }
 
 .vj-scene.vj-active > .vj-scene-num {
-  color: var(--vj-silkscreen);
+  color: var(--vj-o1);
 }
 
 /* auto-cycle running */
