@@ -3087,7 +3087,13 @@ class HydraRenderer {
   }
 
   _initRegl() {
-    this.regl = (0, _regl.default)({
+    // Some drivers refuse WebGL1 while WebGL2 works (Chromium WebView on
+    // Broadcom V3D: "BindToCurrentSequence failed"). regl is WebGL1-era but
+    // runs fine on a WebGL2 context — the GLSL ES 1.00 shaders stay valid
+    // and no WebGL1-only extensions are requested here — so fall back to a
+    // webgl2 context before giving up. A failed getContext('webgl') does not
+    // claim the canvas, so the webgl2 request afterwards is legal.
+    let reglOptions = {
       //  profile: true,
       canvas: this.canvas,
       pixelRatio: 1 //,
@@ -3100,7 +3106,16 @@ class HydraRenderer {
       //   'oes_texture_float_linear'
       //]
 
-    }); // This clears the color buffer to black and the depth buffer to 1
+    };
+    const gl1 = this.canvas.getContext('webgl') || this.canvas.getContext('experimental-webgl');
+    if (!gl1) {
+      const gl2 = this.canvas.getContext('webgl2');
+      if (gl2) {
+        console.warn('hydra: WebGL1 unavailable, running on a WebGL2 context');
+        reglOptions = { gl: gl2 };
+      }
+    }
+    this.regl = (0, _regl.default)(reglOptions); // This clears the color buffer to black and the depth buffer to 1
 
     this.regl.clear({
       color: [0, 0, 0, 1]
