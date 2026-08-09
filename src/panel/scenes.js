@@ -79,35 +79,49 @@ export function saveCycleRandom(on) {
 // 0 = off. Per-device (localStorage); a ?cooldown=N URL param seeds it, which
 // is how a TV kiosk gets configured (append it to the server URL once).
 
-const COOLDOWN_KEY = 'hydra-vj-hotkey-cooldown'
+// each action kind ('scene', 'randomize') has its own duration and timer
+export const COOLDOWN_KINDS = ['scene', 'randomize']
+const cooldownKey = (kind) => 'hydra-vj-hotkey-cooldown-' + kind
+const LEGACY_COOLDOWN_KEY = 'hydra-vj-hotkey-cooldown' // pre-split shared value
+
+const validSecs = (raw) => {
+    const v = parseFloat(raw)
+    return isFinite(v) && v >= 0 && v <= 3600 ? v : null
+}
 
 try {
-    const p = new URLSearchParams(window.location.search).get('cooldown')
-    if (p !== null) {
-        const v = parseFloat(p)
-        if (isFinite(v) && v >= 0 && v <= 3600) localStorage.setItem(COOLDOWN_KEY, String(v))
-    }
+    const params = new URLSearchParams(window.location.search)
+    // ?cooldown=N seeds both kinds; ?cooldownScene= / ?cooldownRandom= one each
+    const seed = { scene: params.get('cooldownScene'), randomize: params.get('cooldownRandom') }
+    const both = params.get('cooldown')
+    COOLDOWN_KINDS.forEach((kind) => {
+        const v = validSecs(seed[kind] !== null ? seed[kind] : both)
+        if (v !== null) localStorage.setItem(cooldownKey(kind), String(v))
+    })
 } catch (e) { /* no window / private mode */ }
 
-export function loadCooldownSecs() {
+export function loadCooldownSecs(kind) {
     try {
-        const v = parseFloat(localStorage.getItem(COOLDOWN_KEY))
-        if (isFinite(v) && v >= 0 && v <= 3600) return v
+        const v = validSecs(localStorage.getItem(cooldownKey(kind)))
+        if (v !== null) return v
+        const legacy = validSecs(localStorage.getItem(LEGACY_COOLDOWN_KEY))
+        if (legacy !== null) return legacy
     } catch (e) { /* fall through to default */ }
     return 0
 }
 
-export function saveCooldownSecs(secs) {
+export function saveCooldownSecs(kind, secs) {
+    if (!COOLDOWN_KINDS.includes(kind)) return
     try {
-        localStorage.setItem(COOLDOWN_KEY, String(secs))
+        localStorage.setItem(cooldownKey(kind), String(secs))
     } catch (e) { /* non-fatal */ }
 }
 
-// one timer per action kind ('scene', 'randomize') — reads the setting on
-// every call so config changes (deck popover, remote op) apply immediately
+// reads the setting on every call so config changes (deck popover, remote
+// op) apply immediately
 const lastTrigger = {}
 export function cooldownGate(kind) {
-    const secs = loadCooldownSecs()
+    const secs = loadCooldownSecs(kind)
     if (secs <= 0) return true
     const t = Date.now()
     if (lastTrigger[kind] && t - lastTrigger[kind] < secs * 1000) return false

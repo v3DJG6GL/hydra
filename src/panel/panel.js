@@ -477,36 +477,48 @@ export default class VJPanel {
             rndBox.checked = this.cycle.random
             rndLabel.insertBefore(rndBox, rndLabel.firstChild)
             pop.appendChild(rndLabel)
-            // minimum seconds between random-scene / random-change hotkeys
+            // minimum seconds between hotkey triggers, one per action kind
             // (0 = off) — forwarded to the renderer so a TV kiosk's own
             // keyboard is throttled too, not just this deck
-            const cdLabel = el(d, 'label', null, this.tr('panel.cooldown', 'hotkey cooldown (s)'))
-            const cdInput = el(d, 'input')
-            cdInput.type = 'number'
-            cdInput.min = '0'
-            cdInput.step = 'any'
-            cdInput.value = fmtNumber(loadCooldownSecs())
-            cdLabel.appendChild(cdInput)
-            pop.appendChild(cdLabel)
+            const cdInputs = {}
+            const cdRows = [
+                ['scene', this.tr('panel.cooldown-scene', 'scene hotkey cooldown (s)')],
+                ['randomize', this.tr('panel.cooldown-randomize', 'random-change cooldown (s)')]
+            ]
+            cdRows.forEach(([kind, text]) => {
+                const cdLabel = el(d, 'label', null, text)
+                const cdInput = el(d, 'input')
+                cdInput.type = 'number'
+                cdInput.min = '0'
+                cdInput.step = 'any'
+                cdInput.value = fmtNumber(loadCooldownSecs(kind))
+                cdLabel.appendChild(cdInput)
+                pop.appendChild(cdLabel)
+                cdInputs[kind] = cdInput
+            })
             const ok = el(d, 'button', 'vj-menu-item', this.tr('panel.cycle-set', 'set pace'))
             const commit = () => {
                 const v = parseFloat(input.value)
                 if (isFinite(v) && v >= 1) this.setCycleSecs(v)
                 this.setCycleRandom(rndBox.checked)
-                const cd = parseFloat(cdInput.value)
-                if (isFinite(cd) && cd >= 0 && cd <= 3600) {
-                    saveCooldownSecs(cd)
-                    if (this.host.remote) this.host.setCooldown(cd)
-                }
+                Object.entries(cdInputs).forEach(([kind, cdInput]) => {
+                    const cd = parseFloat(cdInput.value)
+                    if (isFinite(cd) && cd >= 0 && cd <= 3600) {
+                        saveCooldownSecs(kind, cd)
+                        if (this.host.remote) this.host.setCooldown(kind, cd)
+                    }
+                })
                 this.closePopover()
                 this.renderAll() // refresh the tooltip
             }
             ok.onclick = commit
-            input.onkeydown = cdInput.onkeydown = (e) => {
+            const onKey = (e) => {
                 e.stopPropagation()
                 if (e.key === 'Enter') commit()
                 if (e.key === 'Escape') this.closePopover()
             }
+            input.onkeydown = onKey
+            Object.values(cdInputs).forEach((i) => { i.onkeydown = onKey })
             pop.appendChild(ok)
             setTimeout(() => input.focus(), 0)
         })

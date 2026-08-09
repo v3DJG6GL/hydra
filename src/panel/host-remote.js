@@ -896,8 +896,8 @@ export default class RemoteHost {
         this._send({ op: 'sceneCat', i, cat })
     }
 
-    setCooldown(secs) {
-        this._send({ op: 'cooldown', secs })
+    setCooldown(kind, secs) {
+        this._send({ op: 'cooldown', kind, secs })
     }
 
     sceneReplaceAll(arr) {

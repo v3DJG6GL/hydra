@@ -321,7 +321,7 @@ export default function remoteStore(state, emitter) {
                 return
             case 'cooldown': {
                 const v = parseFloat(msg.secs)
-                if (isFinite(v) && v >= 0 && v <= 3600) saveCooldownSecs(v)
+                if (isFinite(v) && v >= 0 && v <= 3600) saveCooldownSecs(String(msg.kind), v)
                 return
             }
             case 'scenesReplace':
