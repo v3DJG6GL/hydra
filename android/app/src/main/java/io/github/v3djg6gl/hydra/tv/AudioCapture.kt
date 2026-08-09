@@ -73,6 +73,8 @@ class AudioCapture(
     @Volatile private var sourceName = ""
     @Volatile private var sampleRate = 48000
     @Volatile private var requestedDeviceId: Int? = null
+    /** capture rebuilds triggered by hard-zero input; reset when sound returns */
+    @Volatile private var zeroRestarts = 0
     /** the page asked for capture and hasn't stopped it — drives retries */
     @Volatile var startRequested = false; private set
     private var retryStep = 0
@@ -137,6 +139,10 @@ class AudioCapture(
         startRequested = true
         requestedDeviceId = deviceId ?: requestedDeviceId
         retryStep = 0
+        // a stale "denied" must not wedge future starts: the permission (or
+        // the settings switch) may have been granted since — tryStart
+        // re-derives denial itself when it is still real
+        if (state == "denied" && hasPermission()) state = "idle"
         main.post { tryStart() }
     }
 
@@ -247,17 +253,38 @@ class AudioCapture(
             System.arraycopy(window, n, window, 0, WINDOW - n)
             System.arraycopy(buf, 0, window, WINDOW - n, n)
 
-            // API 28 has no isClientSilenced: sustained exact-zero input is
-            // the best available "possibly silenced" heuristic
-            if (Build.VERSION.SDK_INT < 29) {
-                val zero = buf.all { abs(it) < 1e-7f }
-                val now = System.currentTimeMillis()
-                if (zero) {
-                    if (zeroSince == 0L) zeroSince = now
-                    else if (now - zeroSince > 2000 && !silenced) { silenced = true; main.post { emitState() } }
-                } else if (silenced || zeroSince != 0L) {
-                    zeroSince = 0
-                    if (silenced) { silenced = false; main.post { emitState() } }
+            val zero = buf.all { abs(it) < 1e-7f }
+            val nowMs = System.currentTimeMillis()
+            if (zero) {
+                if (zeroSince == 0L) zeroSince = nowMs
+                // API 28 has no isClientSilenced: sustained exact-zero input
+                // is the best available "possibly silenced" heuristic
+                if (Build.VERSION.SDK_INT < 29 && nowMs - zeroSince > 2000 && !silenced) {
+                    silenced = true
+                    main.post { emitState() }
+                }
+                // a healthy input never reads EXACT zero for long (real mics
+                // have a noise floor) — a sustained hard-zero stream while
+                // not OS-silenced means the input path wedged (USB HAL after
+                // jank or re-enumeration). Rebuild the capture instead of
+                // waiting for a device reboot; two attempts, then hold off
+                // until real samples are seen again.
+                if (!silenced && zeroRestarts < 2 && nowMs - zeroSince > 20000) {
+                    zeroRestarts++
+                    main.post {
+                        if (record === rec) {
+                            stopInternal("starting")
+                            scheduleRetry("input wedged (hard silence)")
+                        }
+                    }
+                    return
+                }
+            } else {
+                zeroSince = 0
+                zeroRestarts = 0
+                if (Build.VERSION.SDK_INT < 29 && silenced) {
+                    silenced = false
+                    main.post { emitState() }
                 }
             }
 

@@ -176,10 +176,17 @@ class MainActivity : Activity() {
 
     // ---- native audio: permission hop lives here (needs an Activity)
 
+    private var micAsked = false
+
     fun startAudio(deviceId: Int?) {
         if (!audioCapture.hasPermission()) {
             audioCapture.requestStart(deviceId) // remembers the request; retries after grant
-            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), RC_MIC)
+            // the page re-kicks a silent capture every few seconds — that
+            // must not re-pop the system dialog on top of itself
+            if (!micAsked) {
+                micAsked = true
+                requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), RC_MIC)
+            }
             return
         }
         audioCapture.requestStart(deviceId)

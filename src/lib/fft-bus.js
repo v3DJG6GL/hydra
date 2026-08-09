@@ -155,7 +155,14 @@ const setActive = (next) => {
     const prev = active
     active = next
     if (prev === 'local' || next === 'local') muteLocalTick(next !== 'local')
-    if (prev === 'native' && window.HydraShell && window.HydraShell.audioStop) {
+    // stop the shell capture ONLY on an explicit mode choice that excludes
+    // it. In auto mode the active producer flaps on transient bin stalls
+    // (shader-compile jank on scene changes stalls the push >STALE_MS), and
+    // stop+rekick cycles open/close the AudioRecord over and over — USB
+    // audio HALs (RPi!) wedge under that churn until a device reboot.
+    // A running capture the arbiter isn't using is cheap; leave it alone.
+    if (prev === 'native' && mode !== 'auto' && next !== 'native' &&
+        window.HydraShell && window.HydraShell.audioStop) {
         try { window.HydraShell.audioStop() } catch (e) { /* shell gone */ }
     }
     if (next === 'native' && window.HydraShell && window.HydraShell.audioStart) {
@@ -178,11 +185,16 @@ const kickNative = (t) => {
     try { window.HydraShell.audioStart('{}') } catch (e) { /* shell gone */ }
 }
 
+// native pushes ride the renderer's main thread — a scene change's shader
+// compile can stall them well past the deck threshold without anything
+// being wrong, so the native producer gets a longer leash
+const NATIVE_STALE_MS = 6000
+
 const arbitrate = () => {
     if (!audioObj) return
     const t = now()
     const deckLive = t - prod.deck.lastAt < STALE_MS
-    const nativeLive = t - prod.native.lastAt < STALE_MS
+    const nativeLive = t - prod.native.lastAt < NATIVE_STALE_MS
     let next
     if (mode === 'off') next = 'off'
     else if (mode !== 'auto') next = mode
