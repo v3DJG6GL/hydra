@@ -165,6 +165,19 @@ const setActive = (next) => {
     fireChange()
 }
 
+// auto mode considers the shell mic only once bins arrive, but the shell only
+// captures once asked — without this kick neither side ever moves first. The
+// shell refuses unless its "allow native audio capture" switch is on, so this
+// cannot surprise-activate a mic; it merely wakes a capture the user set up.
+const NATIVE_KICK_MS = 5000
+let nativeKickAt = 0
+const kickNative = (t) => {
+    if (!window.HydraShell || !window.HydraShell.audioStart) return
+    if (t - nativeKickAt < NATIVE_KICK_MS) return
+    nativeKickAt = t
+    try { window.HydraShell.audioStart('{}') } catch (e) { /* shell gone */ }
+}
+
 const arbitrate = () => {
     if (!audioObj) return
     const t = now()
@@ -174,6 +187,7 @@ const arbitrate = () => {
     if (mode === 'off') next = 'off'
     else if (mode !== 'auto') next = mode
     else next = deckLive ? 'deck' : nativeLive ? 'native' : localAvailable() ? 'local' : 'off'
+    if (!nativeLive && (mode === 'native' || (mode === 'auto' && !deckLive))) kickNative(t)
     setActive(next)
     // an explicitly selected producer that stopped delivering shows a frozen
     // meter otherwise — decay to silence so the visuals settle
