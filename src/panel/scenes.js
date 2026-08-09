@@ -8,10 +8,22 @@ export const SLOT_COUNT = 8
 
 export function normalizeScenes(arr) {
     const out = arr.map((s) => s && typeof s.code === 'string'
-        ? { code: s.code, thumb: typeof s.thumb === 'string' ? s.thumb : null, savedAt: s.savedAt || Date.now() }
+        ? {
+            code: s.code,
+            thumb: typeof s.thumb === 'string' ? s.thumb : null,
+            savedAt: s.savedAt || Date.now(),
+            cat: normalizeCat(s.cat)
+        }
         : null)
     while (out.length < SLOT_COUNT) out.push(null)
     return out
+}
+
+// shortcut groups: a scene may belong to one group 1-9; ctrl+shift+<digit>
+// recalls a random scene from that group (see panel.randomSceneCat)
+export function normalizeCat(cat) {
+    const n = typeof cat === 'string' ? parseInt(cat, 10) : cat
+    return Number.isInteger(n) && n >= 1 && n <= 9 ? n : null
 }
 const THUMB_W = 96
 const THUMB_H = 54
@@ -60,6 +72,47 @@ export function saveCycleRandom(on) {
     try {
         localStorage.setItem(CYCLE_RANDOM_KEY, on ? '1' : '0')
     } catch (e) { /* non-fatal */ }
+}
+
+// ---- hotkey cooldown: minimum seconds between "performance" hotkey triggers
+// (random scene / random change), so a mashed key can't strobe the output.
+// 0 = off. Per-device (localStorage); a ?cooldown=N URL param seeds it, which
+// is how a TV kiosk gets configured (append it to the server URL once).
+
+const COOLDOWN_KEY = 'hydra-vj-hotkey-cooldown'
+
+try {
+    const p = new URLSearchParams(window.location.search).get('cooldown')
+    if (p !== null) {
+        const v = parseFloat(p)
+        if (isFinite(v) && v >= 0 && v <= 3600) localStorage.setItem(COOLDOWN_KEY, String(v))
+    }
+} catch (e) { /* no window / private mode */ }
+
+export function loadCooldownSecs() {
+    try {
+        const v = parseFloat(localStorage.getItem(COOLDOWN_KEY))
+        if (isFinite(v) && v >= 0 && v <= 3600) return v
+    } catch (e) { /* fall through to default */ }
+    return 0
+}
+
+export function saveCooldownSecs(secs) {
+    try {
+        localStorage.setItem(COOLDOWN_KEY, String(secs))
+    } catch (e) { /* non-fatal */ }
+}
+
+// one timer per action kind ('scene', 'randomize') — reads the setting on
+// every call so config changes (deck popover, remote op) apply immediately
+const lastTrigger = {}
+export function cooldownGate(kind) {
+    const secs = loadCooldownSecs()
+    if (secs <= 0) return true
+    const t = Date.now()
+    if (lastTrigger[kind] && t - lastTrigger[kind] < secs * 1000) return false
+    lastTrigger[kind] = t
+    return true
 }
 
 export function captureThumb(hydra, cb) {

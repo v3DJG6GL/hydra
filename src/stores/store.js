@@ -88,6 +88,13 @@ export default function store(state, emitter) {
   // hides the editor overlay (code, console, header) but keeps the vj deck
   emitter.on('ui: toggle code', function () {
     state.showCode = !state.showCode
+    // the boot-time gallery load leaves showInfo latched true (invisible while
+    // code is off) — showing code must not drag the intro window along; the
+    // ? toolbar button reopens it deliberately
+    if (state.showCode) {
+      state.showInfo = false
+      state.showExtensions = false
+    }
     try { localStorage.setItem('hydra-show-code', state.showCode ? '1' : '0') } catch (e) { /* private mode */ }
     emitter.emit('render')
   })

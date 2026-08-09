@@ -10,7 +10,7 @@
 import { applyEdit, applyQuietEdit } from './patcher.js'
 import LiveBind from './live-bind.js'
 import { getTransforms } from './metadata.js'
-import { loadScenes, saveScenes, captureThumb, normalizeScenes, SLOT_COUNT } from './scenes.js'
+import { loadScenes, saveScenes, captureThumb, normalizeScenes, normalizeCat, SLOT_COUNT } from './scenes.js'
 
 export default class LocalHost {
     constructor(state, emit) {
@@ -207,7 +207,10 @@ export default class LocalHost {
         const cm = this.cm
         if (!cm) return
         const code = cm.getValue()
-        this.scenes[i] = { code, thumb: null, savedAt: Date.now() }
+        // overwriting a slot keeps its shortcut group — the group describes
+        // the slot's role in the set, not the code that happens to be in it
+        const cat = (this.scenes[i] && this.scenes[i].cat) || null
+        this.scenes[i] = { code, thumb: null, savedAt: Date.now(), cat }
         saveScenes(this.scenes)
         this._fire('scenes-changed')
         const hydra = this.state.hydra && this.state.hydra.hydra
@@ -231,6 +234,17 @@ export default class LocalHost {
         } else {
             this.emit('load and eval code', scene.code, true)
         }
+        // remote decks mirror the active-slot highlight off this (see
+        // remote-store's sceneActive cast) — without it a renderer-local
+        // recall (hotkey, auto-cycle) leaves every deck highlighting stale
+        this._fire('scene-active', i)
+    }
+
+    sceneSetCat(i, cat) {
+        if (!this.scenes[i]) return
+        this.scenes[i].cat = normalizeCat(cat)
+        saveScenes(this.scenes)
+        this._fire('scenes-changed')
     }
 
     sceneClear(i) {

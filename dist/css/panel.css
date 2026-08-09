@@ -980,6 +980,47 @@
   background: var(--vj-line);
 }
 
+/* shortcut-group chips in the scene context menu */
+.vj-menu-groups { padding: 5px 10px 7px; }
+.vj-menu-groups-label {
+  display: block;
+  font-size: 9px;
+  color: var(--vj-dim);
+  margin-bottom: 4px;
+}
+.vj-menu-groups-row { display: flex; gap: 3px; }
+.vj-group-chip {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 10px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--vj-silkscreen);
+  border: 1px solid var(--vj-line);
+  border-radius: 2px;
+  background: var(--vj-chassis);
+}
+.vj-group-chip:hover { border-color: var(--vj-dim); }
+.vj-group-chip.vj-on {
+  color: var(--vj-o1);
+  border-color: var(--vj-o1);
+}
+
+/* group badge on a scene slot (top-right, mirrors the slot number) */
+.vj-scene-cat {
+  position: absolute;
+  right: 3px;
+  top: 2px;
+  z-index: 1;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 9px;
+  color: var(--vj-silkscreen);
+  background: rgba(10, 11, 13, 0.75);
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
 .vj-palette { width: min(300px, calc(100vw - 12px)); }
 
 .vj-palette-search {

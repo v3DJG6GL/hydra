@@ -1,5 +1,6 @@
 // to add:
 // flash block, flash line, format code
+import { cooldownGate } from '../panel/scenes.js'
 
 export default function editorStore(state, emitter) {
     // evt may be a mouse event (toolbar click) or absent (keyboard shortcut)
@@ -8,6 +9,8 @@ export default function editorStore(state, emitter) {
         if (evt.shiftKey) {
             editor.mutator.doUndo();
         } else {
+            // mutations respect the hotkey cooldown (undo above never does)
+            if (!cooldownGate('randomize')) return
             try {
                 editor.mutator.mutate({ reroll: false, changeTransform: evt.metaKey });
             } catch (e) {

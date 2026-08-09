@@ -11,7 +11,7 @@ import { grouped, fmtNumber, fmtShort, INT_PARAMS } from './metadata.js'
 import { edits } from './patcher.js'
 import LocalHost from './host-local.js'
 import MidiControl from './midi.js'
-import { loadCycleSecs, saveCycleSecs, loadCycleRandom, saveCycleRandom, SLOT_COUNT } from './scenes.js'
+import { loadCycleSecs, saveCycleSecs, loadCycleRandom, saveCycleRandom, loadCooldownSecs, saveCooldownSecs, cooldownGate, SLOT_COUNT } from './scenes.js'
 import { openPopup, STYLE_MATCH } from './popup.js'
 
 const CHANNEL_CLASS = { o0: 'ch-o0', o1: 'ch-o1', o2: 'ch-o2', o3: 'ch-o3' }
@@ -392,6 +392,9 @@ export default class VJPanel {
                 (this.midi.isSceneMapped(i) ? ' vj-midimapped' : '') +
                 (this.midi.isLearningScene(i) ? ' vj-learning' : ''))
             slot.appendChild(el(d, 'span', 'vj-scene-num', String(i + 1)))
+            if (scene && scene.cat) {
+                slot.appendChild(el(d, 'span', 'vj-scene-cat', '⌗' + scene.cat))
+            }
             if (scene && scene.thumb) {
                 const img = el(d, 'img', 'vj-scene-thumb')
                 img.src = scene.thumb
@@ -474,16 +477,32 @@ export default class VJPanel {
             rndBox.checked = this.cycle.random
             rndLabel.insertBefore(rndBox, rndLabel.firstChild)
             pop.appendChild(rndLabel)
+            // minimum seconds between random-scene / random-change hotkeys
+            // (0 = off) — forwarded to the renderer so a TV kiosk's own
+            // keyboard is throttled too, not just this deck
+            const cdLabel = el(d, 'label', null, this.tr('panel.cooldown', 'hotkey cooldown (s)'))
+            const cdInput = el(d, 'input')
+            cdInput.type = 'number'
+            cdInput.min = '0'
+            cdInput.step = 'any'
+            cdInput.value = fmtNumber(loadCooldownSecs())
+            cdLabel.appendChild(cdInput)
+            pop.appendChild(cdLabel)
             const ok = el(d, 'button', 'vj-menu-item', this.tr('panel.cycle-set', 'set pace'))
             const commit = () => {
                 const v = parseFloat(input.value)
                 if (isFinite(v) && v >= 1) this.setCycleSecs(v)
                 this.setCycleRandom(rndBox.checked)
+                const cd = parseFloat(cdInput.value)
+                if (isFinite(cd) && cd >= 0 && cd <= 3600) {
+                    saveCooldownSecs(cd)
+                    if (this.host.remote) this.host.setCooldown(cd)
+                }
                 this.closePopover()
                 this.renderAll() // refresh the tooltip
             }
             ok.onclick = commit
-            input.onkeydown = (e) => {
+            input.onkeydown = cdInput.onkeydown = (e) => {
                 e.stopPropagation()
                 if (e.key === 'Enter') commit()
                 if (e.key === 'Escape') this.closePopover()
@@ -506,6 +525,7 @@ export default class VJPanel {
             }
         }
         if (scene) {
+            items.push({ groupRow: true })
             // reorder without drag & drop — the only way to reorder on touch
             if (i > 0) {
                 items.push({ label: this.tr('panel.scene-move-left', 'move left'), fn: () => this.moveScene(i, i - 1) })
@@ -522,6 +542,10 @@ export default class VJPanel {
         if (!items.length) return
         this.openPopover(d, root, anchor, (pop) => {
             items.forEach((item) => {
+                if (item.groupRow) {
+                    pop.appendChild(this.buildGroupRow(d, i, scene))
+                    return
+                }
                 const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : ''), item.label)
                 b.onclick = (e) => {
                     e.stopPropagation()
@@ -531,6 +555,28 @@ export default class VJPanel {
                 pop.appendChild(b)
             })
         })
+    }
+
+    // shortcut-group chips: assign this scene to group 1-9 (ctrl+shift+digit
+    // then recalls a random scene of that group) or clear it with –
+    buildGroupRow(d, i, scene) {
+        const wrap = el(d, 'div', 'vj-menu-groups')
+        wrap.appendChild(el(d, 'span', 'vj-menu-groups-label',
+            this.tr('panel.scene-group', 'shortcut group (ctrl+shift+№ = random of group)')))
+        const row = el(d, 'div', 'vj-menu-groups-row')
+        for (let n = 0; n <= 9; n++) {
+            const cur = scene.cat || 0
+            const chip = el(d, 'button', 'vj-group-chip' + (cur === n ? ' vj-on' : ''),
+                n === 0 ? '–' : String(n))
+            chip.onclick = (e) => {
+                e.stopPropagation()
+                this.closePopover()
+                this.host.sceneSetCat(i, n === 0 ? null : n)
+            }
+            row.appendChild(chip)
+        }
+        wrap.appendChild(row)
+        return wrap
     }
 
     // export/import create their elements in the DECK's document (dock, popup
@@ -711,6 +757,17 @@ export default class VJPanel {
         const filled = []
         this.scenes.forEach((s, i) => { if (s) filled.push(i) })
         if (!filled.length) return
+        if (!cooldownGate('scene')) return
+        this.recallScene(this.pickRandomSlot(filled), { replaceURL: true })
+    }
+
+    // random scene from one shortcut group (ctrl+shift+1..9) — shares the
+    // 'scene' cooldown with randomScene so alternating keys can't strobe
+    randomSceneCat(n) {
+        const filled = []
+        this.scenes.forEach((s, i) => { if (s && s.cat === n) filled.push(i) })
+        if (!filled.length) return
+        if (!cooldownGate('scene')) return
         this.recallScene(this.pickRandomSlot(filled), { replaceURL: true })
     }
 
@@ -731,6 +788,12 @@ export default class VJPanel {
             if (e.code === 'Digit0' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
                 e.preventDefault()
                 this.randomScene()
+                return
+            }
+            const g = /^Digit([1-9])$/.exec(e.code)
+            if (g && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey) {
+                e.preventDefault()
+                this.randomSceneCat(parseInt(g[1], 10))
                 return
             }
             const m = /^Digit([1-8])$/.exec(e.code)

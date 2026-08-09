@@ -195,6 +195,7 @@ export default class RemoteHost {
                 this._canPreview = !!msg.canPreview
                 if (msg.fft) this._applyFftState(msg.fft)
                 if (msg.display) this.displayInfo = msg.display
+                if (typeof msg.activeSlot === 'number' && this.panel) this.panel.cycle.pos = msg.activeSlot
                 this.snapshotReceived = true
                 if (this._previewOn) this._kickPreview() // resumed after a reconnect
                 this._fire('code-changed', 'snapshot')
@@ -215,6 +216,13 @@ export default class RemoteHost {
             case 'scenes':
                 if (msg.seq !== undefined) this.seq = msg.seq
                 this.scenes = msg.scenes
+                this._fire('scenes-changed')
+                return
+            case 'sceneActive':
+                // a renderer-local recall (hotkey, auto-cycle, another deck)
+                // moved the active scene — mirror the highlight
+                if (msg.seq !== undefined) this.seq = msg.seq
+                if (this.panel && typeof msg.i === 'number') this.panel.cycle.pos = msg.i
                 this._fire('scenes-changed')
                 return
             case 'ui':
@@ -882,6 +890,14 @@ export default class RemoteHost {
 
     sceneMove(from, to) {
         this._send({ op: 'sceneMove', from, to })
+    }
+
+    sceneSetCat(i, cat) {
+        this._send({ op: 'sceneCat', i, cat })
+    }
+
+    setCooldown(secs) {
+        this._send({ op: 'cooldown', secs })
     }
 
     sceneReplaceAll(arr) {

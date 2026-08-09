@@ -11,6 +11,7 @@
 import { codeHash, relayUrl, randomId } from '../panel/wire.js'
 import { fmtNumber } from '../panel/metadata.js'
 import * as fftBus from '../lib/fft-bus.js'
+import { saveCooldownSecs } from '../panel/scenes.js'
 import { isDisplay, applyTier, currentTier, collectDiag, showReplacedOverlay } from '../lib/display-mode.js'
 
 const ROOM_KEY = 'hydra-vj-room'
@@ -121,6 +122,7 @@ export default function remoteStore(state, emitter) {
             globals: globals(),
             lbClean: !!(p && p.lb.clean),
             canPreview: !!(p && p.host.captureStream()),
+            activeSlot: p ? p.cycle.pos : -1,
             fft: fftState(),
             display: { on: isDisplay(), tier: currentTier() }
         }
@@ -183,6 +185,11 @@ export default function remoteStore(state, emitter) {
         p.host.on('scenes-changed', () => {
             cast({ t: 'scenes', seq: ++seq, scenes: p.host.scenes })
             sendRaw({ t: 'persist', scenes: p.host.scenes })
+        })
+        // renderer-local recalls (hotkey, auto-cycle) move the active slot
+        // without a scenes-changed — decks mirror the highlight off this
+        p.host.on('scene-active', (i) => {
+            cast({ t: 'sceneActive', seq: ++seq, i })
         })
         return p
     }
@@ -309,6 +316,14 @@ export default function remoteStore(state, emitter) {
             case 'sceneMove':
                 p.moveScene(msg.from | 0, msg.to | 0)
                 return
+            case 'sceneCat':
+                p.host.sceneSetCat(msg.i | 0, msg.cat)
+                return
+            case 'cooldown': {
+                const v = parseFloat(msg.secs)
+                if (isFinite(v) && v >= 0 && v <= 3600) saveCooldownSecs(v)
+                return
+            }
             case 'scenesReplace':
                 if (Array.isArray(msg.scenes)) p.host.sceneReplaceAll(msg.scenes)
                 return

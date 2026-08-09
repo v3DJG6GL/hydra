@@ -89,9 +89,14 @@ export default function panelStore(state, emitter) {
         const toggle = e.key === 'y' || e.key === 'Y'
         const random = e.code === 'Space'
         const randomize = e.code === 'KeyX'
-        if (!toggle && !random && !randomize) return
+        const group = /^Digit([1-9])$/.exec(e.code) // random scene of group N
+        if (!toggle && !random && !randomize && !group) return
         if (e.target && e.target.closest && e.target.closest('.CodeMirror')) return
         e.preventDefault()
+        if (group) {
+            ensure().randomSceneCat(+group[1])
+            return
+        }
         emitter.emit(toggle ? 'panel: toggle' : random ? 'scenes: random' : 'editor: randomize')
     })
 }
