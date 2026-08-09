@@ -226,6 +226,13 @@ export default class LocalHost {
     sceneRecall(i, opts) {
         const scene = this.scenes[i]
         if (!scene) return
+        // a scene is a whole program — reset the synth first, exactly like a
+        // fresh page load of that code. Without this, a previous scene's
+        // leftover output chains and render(oN) pick keep warping the new
+        // one (e.g. a lingering modulateKaleid on o2 mirrors everything to
+        // the center until the page is reloaded). hush() clears sources,
+        // blacks every output and resets render(o0).
+        try { if (typeof window.hush === 'function') window.hush() } catch (e) { /* synth not booted */ }
         if (opts && opts.replaceURL) {
             // auto-cycle recalls must not flood the browser history
             this.emit('editor: load code', scene.code)
