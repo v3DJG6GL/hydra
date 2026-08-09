@@ -156,6 +156,22 @@ class AudioCapture(
     fun onActivityStop() { main.post { stopInternal(if (startRequested) "starting" else "idle") } }
     fun onActivityStart() { if (startRequested) main.post { tryStart() } }
 
+    /**
+     * Activity teardown. Without this the instance zombies on in the
+     * surviving process: the device callback stays registered and
+     * startRequested stays true, so the next audio-device event (USB blip,
+     * HDMI renegotiation) or a pending retry reopens the mic FROM THE DEAD
+     * ACTIVITY — the relaunched activity then finds the input busy until
+     * the user force-stops the app.
+     */
+    fun shutdown() {
+        startRequested = false
+        retryPosted?.let { main.removeCallbacks(it) }
+        retryPosted = null
+        try { audioManager.unregisterAudioDeviceCallback(deviceCallback) } catch (e: Exception) { /* not registered */ }
+        main.post { stopInternal("idle") }
+    }
+
     fun onPermissionResult(granted: Boolean) {
         if (granted) main.post { tryStart() }
         else { startRequested = false; setState("denied") }
@@ -307,6 +323,9 @@ class AudioCapture(
     }
 
     private fun stopInternal(newState: String) {
+        // a retry scheduled before the stop must not fire into the new state
+        retryPosted?.let { main.removeCallbacks(it) }
+        retryPosted = null
         val rec = record
         record = null
         thread = null

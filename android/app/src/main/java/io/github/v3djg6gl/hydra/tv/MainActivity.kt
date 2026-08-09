@@ -124,6 +124,17 @@ class MainActivity : Activity() {
         super.onStop()
     }
 
+    override fun onDestroy() {
+        // the process outlives a finished activity (BACK-BACK exit): without
+        // real teardown the old AudioCapture zombies on holding/regrabbing
+        // the mic and the old WebView leaks its GL context — the relaunched
+        // activity then can't capture until the app is force-stopped
+        if (::audioCapture.isInitialized) audioCapture.shutdown()
+        if (::watchdog.isInitialized) watchdog.stop()
+        if (::host.isInitialized) host.destroy()
+        super.onDestroy()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) hideSystemBars() // some TV dialogs restore the bars
