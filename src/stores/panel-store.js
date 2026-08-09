@@ -88,9 +88,10 @@ export default function panelStore(state, emitter) {
         if (!e.ctrlKey || !e.shiftKey) return
         const toggle = e.key === 'y' || e.key === 'Y'
         const random = e.code === 'Space'
-        if (!toggle && !random) return
+        const randomize = e.code === 'KeyX'
+        if (!toggle && !random && !randomize) return
         if (e.target && e.target.closest && e.target.closest('.CodeMirror')) return
         e.preventDefault()
-        emitter.emit(toggle ? 'panel: toggle' : 'scenes: random')
+        emitter.emit(toggle ? 'panel: toggle' : random ? 'scenes: random' : 'editor: randomize')
     })
 }
