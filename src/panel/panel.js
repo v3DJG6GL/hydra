@@ -538,6 +538,7 @@ export default class VJPanel {
         }
         if (scene) {
             items.push({ groupRow: true })
+            items.push({ label: this.tr('panel.scene-copy', 'copy code'), fn: () => this.copyText(d, scene.code) })
             // reorder without drag & drop — the only way to reorder on touch
             if (i > 0) {
                 items.push({ label: this.tr('panel.scene-move-left', 'move left'), fn: () => this.moveScene(i, i - 1) })
@@ -567,6 +568,87 @@ export default class VJPanel {
                 pop.appendChild(b)
             })
         })
+    }
+
+    // ---- in-deck code view/editor: a plain textarea over the deck — enough
+    // to read, tweak and run a sketch from a tablet without the projector's
+    // code overlay. RUN replaces the whole buffer through the same edit path
+    // as any fader splice (eval + revert-on-error + deck sync).
+
+    openCodeEditor(d, root) {
+        this.closeCodeEditor()
+        const wrap = el(d, 'div', 'vj-codeedit')
+        const head = el(d, 'div', 'vj-codeedit-head')
+        head.appendChild(el(d, 'span', 'vj-codeedit-title',
+            this.tr('panel.codeedit', 'sketch code — ctrl+enter runs')))
+        const close = el(d, 'button', 'vj-codeedit-btn')
+        close.appendChild(el(d, 'i', 'fas fa-times'))
+        close.onclick = () => this.closeCodeEditor()
+        head.appendChild(close)
+        wrap.appendChild(head)
+        const ta = el(d, 'textarea', 'vj-codeedit-ta')
+        ta.value = this.host.hasBuffer() ? this.host.getCode() : ''
+        ta.spellcheck = false
+        ta.setAttribute('autocapitalize', 'off')
+        ta.setAttribute('autocorrect', 'off')
+        wrap.appendChild(ta)
+        const row = el(d, 'div', 'vj-codeedit-row')
+        const run = el(d, 'button', 'vj-codeedit-btn vj-codeedit-run', '► ' + this.tr('panel.codeedit-run', 'RUN'))
+        const doRun = () => {
+            const cur = this.host.hasBuffer() ? this.host.getCode() : ''
+            this.apply({ from: 0, to: cur.length, text: ta.value })
+        }
+        run.onclick = doRun
+        const copy = el(d, 'button', 'vj-codeedit-btn', this.tr('panel.codeedit-copy', 'COPY'))
+        copy.onclick = () => this.copyText(d, ta.value)
+        const reload = el(d, 'button', 'vj-codeedit-btn', this.tr('panel.codeedit-reload', 'RELOAD'))
+        reload.title = this.tr('panel.codeedit-reload-tip', 'discard edits and re-read the running code')
+        reload.onclick = () => { ta.value = this.host.hasBuffer() ? this.host.getCode() : '' }
+        row.append(run, copy, reload)
+        wrap.appendChild(row)
+        // deck hotkeys (scene keys, undo) must not fire while typing
+        ta.onkeydown = (e) => {
+            e.stopPropagation()
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doRun() }
+            if (e.key === 'Escape') this.closeCodeEditor()
+        }
+        root.appendChild(wrap)
+        this._codeEdit = wrap
+        setTimeout(() => ta.focus(), 0)
+    }
+
+    closeCodeEditor() {
+        if (this._codeEdit) {
+            this._codeEdit.remove()
+            this._codeEdit = null
+        }
+    }
+
+    copyText(d, text) {
+        const done = (ok) => this.host._fire && this.host._fire('toast',
+            ok ? this.tr('panel.copied', 'code copied to clipboard')
+                : this.tr('panel.copy-failed', 'copy failed — select the text and copy manually'),
+            ok ? 'info' : 'error')
+        const nav = (d.defaultView || window).navigator
+        if (nav.clipboard && nav.clipboard.writeText) {
+            nav.clipboard.writeText(text).then(() => done(true), () => done(this.legacyCopy(d, text)))
+        } else {
+            done(this.legacyCopy(d, text))
+        }
+    }
+
+    // execCommand fallback: plain-http LAN decks have no navigator.clipboard
+    legacyCopy(d, text) {
+        try {
+            const ta = d.createElement('textarea')
+            ta.value = text
+            ta.style.cssText = 'position:fixed;opacity:0'
+            d.body.appendChild(ta)
+            ta.select()
+            const ok = d.execCommand('copy')
+            ta.remove()
+            return ok
+        } catch (e) { return false }
     }
 
     // shortcut-group chips: assign this scene to group 1-9 (ctrl+shift+digit
@@ -1053,10 +1135,14 @@ export default class VJPanel {
         // stage view: drop the code/console/toolbar overlay, keep visuals + deck.
         // lit = code visible, matching the FFT button (lit = monitor visible)
         const codeBtn = el(d, 'button', 'vj-fft vj-codebtn' + (this.host.getShowCode() ? ' vj-on' : ''), 'CODE')
-        codeBtn.title = this.tr('panel.hide-code', 'show/hide the code overlay (visuals and deck stay)')
+        codeBtn.title = this.tr('panel.hide-code', 'show/hide the code overlay (visuals and deck stay) — right-click to view/edit the code in the deck')
         codeBtn.onclick = () => {
             this.host.toggleCode()
             codeBtn.classList.toggle('vj-on', this.host.getShowCode())
+        }
+        codeBtn.oncontextmenu = (e) => {
+            e.preventDefault()
+            this.openCodeEditor(d, this.hostRootFor(codeBtn))
         }
         rail.appendChild(codeBtn)
 
