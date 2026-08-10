@@ -7,7 +7,7 @@
 // All caching happens at runtime, so one successful load makes the installed
 // deck launch instantly and survive venue-wifi dropouts. The /ws relay socket
 // is a WebSocket upgrade and never hits the fetch handler.
-const CACHE = 'hydra-deck-v1'
+const CACHE = 'hydra-deck-v2'
 
 self.addEventListener('install', () => self.skipWaiting())
 
@@ -26,13 +26,17 @@ self.addEventListener('fetch', (e) => {
     if (url.origin !== location.origin) return
     if (url.pathname === '/ws' || url.pathname === '/healthz') return
 
-    if (req.mode === 'navigate') {
+    // network-first for the page AND unhashed stylesheets: deck.html names
+    // the current hashed JS bundle, but /css/*.css keeps its name across
+    // deploys — stale-while-revalidate would pair fresh JS with last
+    // deploy's CSS for one whole load (new UI renders unstyled)
+    if (req.mode === 'navigate' || req.destination === 'style' || url.pathname.startsWith('/css/')) {
         e.respondWith(
             fetch(req).then((res) => {
                 if (res.ok) caches.open(CACHE).then((c) => c.put(req, res.clone())).catch(() => {})
                 return res
             }).catch(() =>
-                caches.match(req).then((hit) => hit || caches.match('/deck.html'))
+                caches.match(req).then((hit) => hit || (req.mode === 'navigate' ? caches.match('/deck.html') : undefined))
             )
         )
         return

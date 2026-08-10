@@ -1036,8 +1036,9 @@
   flex: 1;
   min-height: 0;
   resize: none;
+  tab-size: 2;
   font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
   color: var(--vj-silkscreen);
   background: rgba(0, 0, 0, 0.45);
@@ -1059,6 +1060,48 @@
 }
 .vj-codeedit-btn:hover { border-color: var(--vj-dim); }
 .vj-codeedit-run { color: var(--vj-o1); border-color: var(--vj-o1); }
+
+/* native expression widget: the ƒ chip on top, one mini-fader per numeric
+   literal below — the left edge carries the expression color */
+.vj-expr-box { border-left-color: var(--vj-o3); }
+.vj-expr-box .vj-expr { flex: auto; }
+.vj-expr-lit-ctx {
+  width: 64px;
+  flex: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  direction: rtl; /* keep the end (right next to the number) visible */
+  text-align: right;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 9px;
+  color: var(--vj-dim);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* free-text editor for one expression (popover) */
+.vj-popover.vj-exprform {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  width: min(78vw, 380px);
+}
+.vj-exprform-ta {
+  width: 100%;
+  min-height: 64px;
+  resize: vertical;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--vj-silkscreen);
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--vj-line);
+  border-radius: 2px;
+  padding: 6px;
+}
+.vj-exprform-ta:focus { outline: none; border-color: var(--vj-dim); }
 
 /* group badge on a scene slot (top-right, mirrors the slot number) */
 .vj-scene-cat {

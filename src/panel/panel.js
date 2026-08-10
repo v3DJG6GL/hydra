@@ -613,6 +613,7 @@ export default class VJPanel {
             if (e.key === 'Escape') this.closeCodeEditor()
         }
         root.appendChild(wrap)
+        wrap._ta = ta // renderInto re-attaches the overlay across re-renders
         this._codeEdit = wrap
         setTimeout(() => ta.focus(), 0)
     }
@@ -622,6 +623,7 @@ export default class VJPanel {
             this._codeEdit.remove()
             this._codeEdit = null
         }
+        if (this._codeEditBtn) this._codeEditBtn.classList.remove('vj-on')
     }
 
     copyText(d, text) {
@@ -969,6 +971,13 @@ export default class VJPanel {
         const scrollables = '.vj-body, .vj-chips, .vj-scenes'
         const scrolled = Array.from(root.querySelectorAll(scrollables))
             .map((n) => ({ left: n.scrollLeft, top: n.scrollTop }))
+        // the code-editor overlay must survive the wipe: RUN (and any other
+        // deck's edit) triggers a re-render, and losing the open editor with
+        // the user's cursor in it would make it unusable
+        const keepEdit = this._codeEdit && this._codeEdit.parentNode === root ? this._codeEdit : null
+        const editHadFocus = keepEdit && keepEdit.contains(d.activeElement)
+        const editSel = editHadFocus && keepEdit._ta
+            ? { s: keepEdit._ta.selectionStart, e: keepEdit._ta.selectionEnd, top: keepEdit._ta.scrollTop } : null
         root.textContent = ''
         root.appendChild(this.renderToprail(d, root))
         if (this.previewOn && this.isAuxRoot(root)) {
@@ -1023,6 +1032,14 @@ export default class VJPanel {
             if (s.left) n.scrollLeft = s.left
             if (s.top) n.scrollTop = s.top
         })
+        if (keepEdit) {
+            root.appendChild(keepEdit)
+            if (editSel && keepEdit._ta) {
+                keepEdit._ta.focus()
+                keepEdit._ta.setSelectionRange(editSel.s, editSel.e)
+                keepEdit._ta.scrollTop = editSel.top
+            }
+        }
     }
 
     renderToprail(d, root) {
@@ -1145,6 +1162,20 @@ export default class VJPanel {
             this.openCodeEditor(d, this.hostRootFor(codeBtn))
         }
         rail.appendChild(codeBtn)
+
+        // the in-deck code editor gets its own button — right-clicking CODE
+        // still works, but that's undiscoverable on a tablet
+        const editBtn = el(d, 'button', 'vj-fft' + (this._codeEdit ? ' vj-on' : ''), '✎ EDIT')
+        editBtn.title = this.tr('panel.codeedit-open', 'view/edit the sketch code here in the deck (run, copy, reload)')
+        editBtn.onclick = () => {
+            if (this._codeEdit) this.closeCodeEditor()
+            else {
+                this.openCodeEditor(d, this.hostRootFor(editBtn))
+                editBtn.classList.add('vj-on')
+            }
+        }
+        this._codeEditBtn = editBtn
+        rail.appendChild(editBtn)
 
         // aux windows can't see the main tab's canvas — offer a live preview
         if (isAux && this.host.canPreview()) {
@@ -1499,7 +1530,7 @@ export default class VJPanel {
         chip.appendChild(params)
         // a chip hosting a nested chain or a sequencer must grow to fit it —
         // the strip scrolls as a whole instead of the content clipping
-        if (params.querySelector('.vj-subchain, .vj-seq')) chip.classList.add('vj-wide')
+        if (params.querySelector('.vj-subchain, .vj-seq, .vj-expr-box')) chip.classList.add('vj-wide')
 
         if (!isSource) this.attachChipDrag(d, root, head, chip, chainLike, index)
         return chip
@@ -1545,7 +1576,9 @@ export default class VJPanel {
             rowEl.appendChild(this.renderMouseBind(d, input, arg))
             return rowEl
         }
-        rowEl.appendChild(this.renderExprChip(d, arg, input))
+        const exprEl = this.renderExprChip(d, arg, input)
+        if (exprEl.classList.contains('vj-expr-box')) rowEl.classList.add('vj-bindparam')
+        rowEl.appendChild(exprEl)
         return rowEl
     }
 
@@ -1568,23 +1601,123 @@ export default class VJPanel {
     }
 
     renderExprChip(d, arg, input) {
-        const wrap = el(d, 'div', 'vj-expr-wrap')
         const chipEl = el(d, 'button', 'vj-expr')
         const tags = (arg.tags || []).filter((t) => t !== 'fn').map((t) => TAG_ICONS[t]).filter(Boolean).join('')
         chipEl.appendChild(el(d, 'span', 'vj-expr-badge', 'ƒ' + (tags ? ' ' + tags : '')))
         const text = arg.text.replace(/^\(\)\s*=>\s*/, '')
-        const short = text.length > 24 ? text.slice(0, 23) + '…' : text
+        const short = text.length > 30 ? text.slice(0, 29) + '…' : text
         chipEl.appendChild(el(d, 'span', 'vj-expr-text', short))
-        chipEl.title = arg.text + '\n' + this.tr('panel.expr-hint', 'live expression — click to edit it in the code')
-        chipEl.onclick = () => this.jumpToRange(arg.range)
-        wrap.appendChild(chipEl)
+        chipEl.title = arg.text + '\n' + this.tr('panel.expr-hint', 'live expression — tap to edit its text')
+        chipEl.onclick = () => this.openExprEditor(d, this.hostRootFor(chipEl), chipEl, arg)
 
         const freeze = el(d, 'button', 'vj-expr-freeze')
         freeze.appendChild(el(d, 'i', 'fas fa-thumbtack'))
         freeze.title = this.tr('panel.freeze-expr', 'freeze to its current value — turns into a fader')
         freeze.onclick = () => this.freezeExpr(arg, input)
-        wrap.appendChild(freeze)
-        return wrap
+
+        // every number inside the expression gets its own mini-fader, so the
+        // amplitudes/frequencies of a () => … formula tune like any other
+        // param — without leaving the deck or reading code
+        const lits = this.exprLiterals(arg.text).slice(0, 6)
+        if (!lits.length) {
+            const wrap = el(d, 'div', 'vj-expr-wrap')
+            wrap.appendChild(chipEl)
+            wrap.appendChild(freeze)
+            return wrap
+        }
+        const box = el(d, 'div', 'vj-bind vj-expr-box')
+        const head = el(d, 'div', 'vj-bind-row vj-bind-head')
+        head.appendChild(chipEl)
+        head.appendChild(freeze)
+        box.appendChild(head)
+        lits.forEach((lit) => box.appendChild(this.buildExprLitRow(d, arg, lit)))
+        return box
+    }
+
+    // numeric literals inside an expression, with the char offsets to splice
+    // them back. Identifier tails (x2), property names and array indices
+    // (a.fft[0]) are skipped; a unary minus is folded into the literal so a
+    // drag can cross zero.
+    exprLiterals(text) {
+        const out = []
+        const re = /\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi
+        let m
+        while ((m = re.exec(text))) {
+            const before = text.slice(0, m.index)
+            const after = text.slice(m.index + m[0].length)
+            if (/[\w$.]$/.test(before)) continue
+            if (/^\s*\]/.test(after)) continue
+            let start = m.index
+            const sign = /-\s*$/.exec(before)
+            if (sign) {
+                const prev = before.slice(0, sign.index).trimEnd().slice(-1)
+                if (!prev || '(,*+-/%=<>&|?:'.includes(prev)) start = sign.index
+            }
+            const str = text.slice(start, m.index + m[0].length).replace(/\s+/g, '')
+            const value = parseFloat(str)
+            if (isFinite(value)) out.push({ start, len: m.index + m[0].length - start, value })
+        }
+        return out
+    }
+
+    buildExprLitRow(d, arg, lit) {
+        const row = el(d, 'div', 'vj-bind-row')
+        // a slice of the formula just before the number locates it visually
+        let ctx = arg.text.replace(/^\(\)\s*=>\s*/, (p) => ' '.repeat(p.length)).slice(Math.max(0, lit.start - 9), lit.start).trim()
+        if (lit.start > 9) ctx = '…' + ctx
+        const label = el(d, 'label', 'vj-label vj-bind-label vj-expr-lit-ctx', ctx || '=')
+        label.title = arg.text
+        row.appendChild(label)
+        let cur = lit.value
+        const val = el(d, 'span', 'vj-value', fmtShort(cur))
+        // commit-only: a live expression can't stream through LiveBind (the
+        // uniform would replace the whole function), so the splice happens on
+        // release / typed entry and re-evals like any other structural edit
+        const splice = (v) => this.apply({
+            from: arg.range[0] + lit.start,
+            to: arg.range[0] + lit.start + lit.len,
+            text: fmtNumber(v)
+        }, { replaceURL: true })
+        const track = this.makeFader(d, {
+            get: () => cur,
+            ref: Math.max(Math.abs(lit.value), 0.05),
+            live: (v) => { cur = v; val.textContent = fmtShort(v) },
+            commit: (v) => splice(v)
+        })
+        track.title = this.tr('panel.expr-lit', 'a number inside the expression — drag to change (applies on release)')
+        this.attachValueEdit(d, val, { get: () => cur, set: (v) => splice(v) })
+        row.appendChild(track)
+        row.appendChild(val)
+        return row
+    }
+
+    // free-text editing of one expression, in place — a small popover with
+    // the formula and APPLY, so a remote deck never needs the renderer's
+    // CodeMirror for a quick tweak
+    openExprEditor(d, root, anchor, arg) {
+        this.openPopover(d, root, anchor, (pop) => {
+            pop.classList.add('vj-exprform')
+            const ta = el(d, 'textarea', 'vj-exprform-ta')
+            ta.value = arg.text
+            ta.spellcheck = false
+            ta.setAttribute('autocapitalize', 'off')
+            ta.setAttribute('autocorrect', 'off')
+            pop.appendChild(ta)
+            const ok = el(d, 'button', 'vj-menu-item', this.tr('panel.expr-apply', 'apply'))
+            const commit = () => {
+                const text = ta.value.trim()
+                if (text && text !== arg.text) this.apply({ from: arg.range[0], to: arg.range[1], text })
+                this.closePopover()
+            }
+            ok.onclick = commit
+            ta.onkeydown = (e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commit() }
+                if (e.key === 'Escape') this.closePopover()
+            }
+            pop.appendChild(ok)
+            setTimeout(() => ta.focus(), 0)
+        })
     }
 
     // evaluate the expression once at the current time/mouse state and pin
@@ -2265,7 +2398,12 @@ export default class VJPanel {
         const text = (stmt.text || '').replace(/\s+/g, ' ')
         rowEl.appendChild(el(d, 'span', 'vj-raw-text', text.length > 60 ? text.slice(0, 59) + '…' : text))
         rowEl.title = this.tr('panel.raw-hint', 'not chain-editable — click to edit in the code')
-        rowEl.onclick = () => this.jumpToRange(stmt.range)
+        rowEl.onclick = () => {
+            // a remote deck has no CodeMirror to jump to — open the in-deck
+            // editor instead of toasting
+            if (this.host.remote) this.openCodeEditor(d, this.hostRootFor(rowEl))
+            else this.jumpToRange(stmt.range)
+        }
         return rowEl
     }
 
