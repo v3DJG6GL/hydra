@@ -132,8 +132,11 @@ show whichever source is live.
 
   Clicking through the warning is enough for **Chromium-family** browsers
   (Chrome, Vivaldi, Brave, Edge). **Firefox/LibreWolf are stricter: they
-  silently deny Web MIDI on a cert-override origin** — the fix is to make
-  the cert genuinely trusted on each controlling device:
+  silently deny Web MIDI on a cert-override origin**, and they also reject
+  a CA certificate presented as the server's own cert — so the stack
+  generates a tiny local CA plus a CA-signed server certificate
+  (mkcert-style). Make the CA genuinely trusted on each controlling
+  device:
 
   1. Set `HYDRA_TLS_SAN` (compose env) to every name/IP the rig is reached
      by, e.g. `localhost,127.0.0.1,192.168.88.100` (bare entries get their
@@ -141,12 +144,14 @@ show whichever source is live.
      the cert regenerates by itself whenever this value changes. A trusted
      import only validates when the SAN matches the URL in the address
      bar, so this step comes first.
-  2. On each device, download the cert from `https://<pi>:8443/hydra.crt`
-     (or `http://<pi>:8080/hydra.crt` to skip the warning while fetching).
+  2. On each device, download the CA from `http://<pi>:8080/hydra.crt`
+     (it serves `CN=hydra-lan CA`, not the server cert).
   3. Import it as trusted: Firefox/LibreWolf → Settings → Privacy &
      Security → Certificates → View Certificates → Authorities → Import →
      tick "Trust this CA to identify websites". Android → Settings →
      Security → Encryption & credentials → Install a certificate → CA.
+     The CA is created once and survives SAN changes — adding a name/IP
+     later re-issues only the server cert, no re-import needed.
   4. Reload `https://<pi>:8443/deck.html…` — no warning, padlock closed,
      and Firefox's Web MIDI permission flow works like on a public https
      deployment. (Firefox side note: it only shows the MIDI prompt when a

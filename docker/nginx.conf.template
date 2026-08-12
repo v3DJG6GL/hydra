@@ -21,12 +21,14 @@ server {
         add_header Cache-Control "no-cache";
     }
 
-    # the public half of the self-signed pair, downloadable so each device
-    # can install it as a trusted authority instead of clicking through the
-    # warning — Firefox/LibreWolf silently refuse Web MIDI on cert-override
-    # origins, and Android wants certs in its user CA store
+    # the local CA certificate, downloadable so each device can install it
+    # as a trusted authority instead of clicking through the warning —
+    # Firefox/LibreWolf silently refuse Web MIDI on cert-override origins,
+    # and Android wants CAs in its user credential store. Falls back to the
+    # server cert itself when the pair was user-provided (no generated CA).
     location = /hydra.crt {
-        alias /certs/hydra.crt;
+        root /certs;
+        try_files /hydra-ca.crt /hydra.crt =404;
         default_type application/x-x509-ca-cert;
     }
 
