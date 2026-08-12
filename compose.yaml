@@ -28,13 +28,11 @@ services:
     # environment:
     #   HYDRA_RELAY_HOST: hydra-relay
     #   HYDRA_RELAY_PORT: "8081"
-    #   # Names/IPs baked into the generated cert. Set this to how the rig
-    #   # is actually reached BEFORE importing the cert on devices — a
-    #   # trusted import only validates when the SAN matches the URL.
-    #   # Regenerate after changing:
-    #   #   docker compose exec hydra sh -c 'rm -f /certs/hydra.*'
-    #   #   docker compose restart hydra
-    #   HYDRA_TLS_SAN: DNS:localhost,IP:127.0.0.1,IP:192.168.88.100
+    #   # Names/IPs baked into the generated cert — set to how the rig is
+    #   # actually reached, then `docker compose up -d`: the cert regenerates
+    #   # automatically whenever this changes (re-import it on devices after;
+    #   # a trusted import only validates when the SAN matches the URL).
+    #   HYDRA_TLS_SAN: localhost,127.0.0.1,192.168.88.100
     volumes:
       # the self-signed TLS cert — persisting it keeps the per-device
       # "accept the risk" exceptions valid across container recreates.

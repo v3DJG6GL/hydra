@@ -135,11 +135,12 @@ show whichever source is live.
   silently deny Web MIDI on a cert-override origin** — the fix is to make
   the cert genuinely trusted on each controlling device:
 
-  1. Set `HYDRA_TLS_SAN` (compose env) to include every name/IP the rig is
-     reached by, e.g. `DNS:localhost,IP:127.0.0.1,IP:192.168.88.100`, then
-     regenerate: `docker compose exec hydra sh -c 'rm -f /certs/hydra.*'`
-     and `docker compose restart hydra`. A trusted import only validates
-     when the SAN matches the URL in the address bar.
+  1. Set `HYDRA_TLS_SAN` (compose env) to every name/IP the rig is reached
+     by, e.g. `localhost,127.0.0.1,192.168.88.100` (bare entries get their
+     `DNS:`/`IP:` prefixes automatically), then `docker compose up -d` —
+     the cert regenerates by itself whenever this value changes. A trusted
+     import only validates when the SAN matches the URL in the address
+     bar, so this step comes first.
   2. On each device, download the cert from `https://<pi>:8443/hydra.crt`
      (or `http://<pi>:8080/hydra.crt` to skip the warning while fetching).
   3. Import it as trusted: Firefox/LibreWolf → Settings → Privacy &
