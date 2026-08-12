@@ -2033,10 +2033,13 @@ export default class VJPanel {
             const m = this.midi.mappings.params[arg.path]
             const ctl = this.midi.paramControl(arg.path)
             if (m.cc !== undefined) {
+                // unlimited by default (the knob moves the value like the
+                // fader); this is where to pin an absolute range instead
+                const span = isFinite(m.min) && isFinite(m.max)
+                    ? ` (${fmtNumber(m.min)} to ${fmtNumber(m.max)})`
+                    : ` (${this.tr('panel.midi-unlimited', 'unlimited')})`
                 items.push({
-                    // surface the active range — hardware sweeps the whole
-                    // of it, and this is where to widen it
-                    label: this.tr('panel.midi-range', 'midi range…') + ` (${fmtNumber(m.min)} to ${fmtNumber(m.max)})`,
+                    label: this.tr('panel.midi-range', 'midi range…') + span,
                     keepOpen: true,
                     fn: () => this.openMidiRange(d, root, anchor, arg)
                 })
@@ -2124,11 +2127,14 @@ export default class VJPanel {
         })
     }
 
-    // min/max editor for an existing MIDI mapping (knobs only — pads carry
-    // no range, they mute/unmute)
+    // optional absolute range for a knob mapping (knobs only — pads carry no
+    // range, they mute/unmute). Learns come with no range at all: the knob
+    // moves the value like the fader. Setting min/max here pins the knob's
+    // travel onto that span instead; clearing goes back to unlimited.
     openMidiRange(d, root, anchor, arg) {
         const m = this.midi.mappings.params[arg.path]
         if (!m || m.cc === undefined) return
+        const hasRange = isFinite(m.min) && isFinite(m.max)
         this.openPopover(d, root, anchor, (pop) => {
             pop.classList.add('vj-rangeform')
             const mkField = (labelText, value) => {
@@ -2141,25 +2147,13 @@ export default class VJPanel {
                 pop.appendChild(label)
                 return input
             }
-            const minIn = mkField(this.tr('panel.midi-range-min', 'min'), m.min)
-            const maxIn = mkField(this.tr('panel.midi-range-max', 'max'), m.max)
-            // opt-in deck-wide default: every future learn starts with this
-            // range instead of the auto-derived 0..2×value one
-            const def = this.midi.mappings.defaultRange
-            const defWrap = el(d, 'label', 'vj-midi-default')
-            const cb = el(d, 'input')
-            cb.type = 'checkbox'
-            cb.checked = !!def && def.min === m.min && def.max === m.max
-            defWrap.appendChild(cb)
-            defWrap.appendChild(d.createTextNode(this.tr('panel.midi-range-default', 'use as default for new learns')))
-            pop.appendChild(defWrap)
+            // suggest 0..2×|value| when pinning a range onto an unlimited knob
+            const ref = Math.max(Math.abs(arg.value) || 0, 0.5)
+            const minIn = mkField(this.tr('panel.midi-range-min', 'min'), hasRange ? m.min : 0)
+            const maxIn = mkField(this.tr('panel.midi-range-max', 'max'), hasRange ? m.max : 2 * ref)
             const ok = el(d, 'button', 'vj-menu-item', this.tr('panel.midi-range-set', 'set range'))
             const commit = () => {
-                const min = parseFloat(minIn.value)
-                const max = parseFloat(maxIn.value)
-                this.midi.setRange(arg.path, min, max)
-                if (cb.checked) this.midi.setDefaultRange(min, max)
-                else if (def && def.min === m.min && def.max === m.max) this.midi.setDefaultRange(null)
+                this.midi.setRange(arg.path, parseFloat(minIn.value), parseFloat(maxIn.value))
                 this.closePopover()
             }
             ok.onclick = commit
@@ -2171,11 +2165,11 @@ export default class VJPanel {
                 }
             })
             pop.appendChild(ok)
-            if (def) {
+            if (hasRange) {
                 const clr = el(d, 'button', 'vj-menu-item vj-danger',
-                    this.tr('panel.midi-range-default-clear', `clear default (${fmtNumber(def.min)} to ${fmtNumber(def.max)}) — back to auto`))
+                    this.tr('panel.midi-range-clear', 'clear range — unlimited (knob moves the value like the fader)'))
                 clr.onclick = () => {
-                    this.midi.setDefaultRange(null)
+                    this.midi.clearRange(arg.path)
                     this.closePopover()
                 }
                 pop.appendChild(clr)

@@ -239,15 +239,18 @@ Web MIDI needs a secure context: WAN/https decks, or the renderer machine
 itself. Right-click (long-press on touch) the thing you want on hardware:
 
 - **Faders** — *midi learn (move a knob)* binds the next CC that changes.
-  Knobs sweep the mapping's **range**, which starts as a guess from the
-  value at learn time (0 to 2× it); *midi range…* in the same menu shows
-  the active range and takes any min/max you like — including negatives
-  and values far beyond the on-screen fader. A hand-set range sticks even
-  if you re-learn the knob later.
-- **Buttons work too** — on a fader, *midi button: toggle* flips the param
-  between the range's min and max on every hit, *midi button: hold* jumps
-  it to max while the pad is held and back to min on release (release
-  works with real note-offs and with vel-0 note-ons, both conventions).
+  A learned knob has **no range**: it moves the value exactly like the
+  on-screen fader — relative and unbounded, with sensitivity scaled to the
+  value's magnitude when you grab the knob (re-grab to recalibrate). If
+  you'd rather have the knob's physical travel pinned to fixed bounds,
+  *midi range…* in the same menu takes any min/max — including negatives
+  and values far beyond the on-screen fader — and *clear range* goes back
+  to unlimited.
+- **Buttons work too** — on a fader, *midi button: toggle* mutes/unmutes
+  the param (0 on one hit, the remembered level on the next), *midi
+  button: hold* keeps it on while the pad is held and drops it to 0 on
+  release (release works with real note-offs and with vel-0 note-ons,
+  both conventions).
 - **Scene pads** — *midi learn* on a scene slot recalls it on a pad hit.
 - **HUSH** — right-click it and hit a pad: panic button on hardware.
 

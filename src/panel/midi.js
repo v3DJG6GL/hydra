@@ -6,9 +6,12 @@
 // faders use (LiveBind), so hardware control never recompiles shaders; the
 // value is committed into the code after ~600ms of controller silence — as
 // a quiet text splice while the binding is live, so a knob burst costs at
-// most one eval. Every param mapping carries a min/max range (edited via
-// "midi range…" in the fader menu; the default derives from the value at
-// learn time, and a custom range survives re-learning). Mappings persist
+// most one eval. A learned knob has NO range: it drives the value the same
+// way the on-screen fader does — relative, unbounded, sensitivity scaled to
+// the value's magnitude at the start of each burst. "midi range…" in the
+// fader menu optionally pins an absolute min/max (the knob position then
+// maps straight onto that span); clearing it goes back to unlimited.
+// Mappings persist
 // in localStorage, keyed by the arg's stable path (which embeds the function
 // name, so a mapping deactivates when the sketch structure changes under it).
 import { edits } from './patcher.js'
@@ -37,12 +40,12 @@ function loadMappings() {
         const m = JSON.parse(localStorage.getItem(KEY))
         if (m && typeof m === 'object') {
             if (m.params || m.scenes || m.actions) {
-                return { params: m.params || {}, scenes: m.scenes || {}, actions: m.actions || {}, defaultRange: m.defaultRange || null }
+                return { params: m.params || {}, scenes: m.scenes || {}, actions: m.actions || {} }
             }
-            return { params: m, scenes: {}, actions: {}, defaultRange: null } // pre-scene flat format
+            return { params: m, scenes: {}, actions: {} } // pre-scene flat format
         }
     } catch (e) { /* fresh */ }
-    return { params: {}, scenes: {}, actions: {}, defaultRange: null }
+    return { params: {}, scenes: {}, actions: {} }
 }
 
 export default class MidiControl {
@@ -50,8 +53,8 @@ export default class MidiControl {
         this.c = controller
         this.access = null
         this.learning = null // {path, mode:'cc'|'toggle'|'push'} | {scene} | {action}
-        // params: path -> {cc, ch, min, max} (knob)
-        //               | {note, ch, mode:'toggle'|'push', min, max} (button)
+        // params: path -> {cc, ch [, min, max]} (knob — min/max only if set)
+        //               | {note, ch, mode:'toggle'|'push', on} (button)
         // scenes: 'n<note>c<ch>' -> slot     actions: 'n<note>c<ch>' -> 'hush'
         this.mappings = loadMappings()
         this.active = new Map() // path -> {key, value, timer}
@@ -152,7 +155,7 @@ export default class MidiControl {
         return !!this.learning && this.learning.scene === slot
     }
 
-    // hint: the value to derive the auto range from when the arg isn't in the
+    // hint: the value a pad's on-level derives from when the arg isn't in the
     // model yet (a ghost default still being materialized on a remote deck)
     startLearn(path, mode, hint) {
         return this._arm({ path, mode: mode || 'cc', hint })
@@ -207,38 +210,24 @@ export default class MidiControl {
         this.c.renderAll()
     }
 
+    // pin an absolute range onto a knob mapping — from then on the knob
+    // position maps straight onto min..max instead of moving relatively
     setRange(path, min, max) {
         const m = this.mappings.params[path]
         if (!m || !isFinite(min) || !isFinite(max)) return
         m.min = min
         m.max = max
-        m.custom = true
         this.persist()
     }
 
-    // deck-wide default range for NEW learns; null = auto-derive per param
-    setDefaultRange(min, max) {
-        this.mappings.defaultRange = isFinite(min) && isFinite(max) ? { min, max } : null
+    // back to the default: unlimited, relative
+    clearRange(path) {
+        const m = this.mappings.params[path]
+        if (!m) return
+        delete m.min
+        delete m.max
+        delete m.custom
         this.persist()
-    }
-
-    // a hand-set range survives re-learning; otherwise the deck default (if
-    // one is set) applies, and failing that the range auto-derives from the
-    // value at learn time (0..2× for positives, symmetric for negatives)
-    _rangeFor(path, hint) {
-        const prev = this.mappings.params[path]
-        if (prev && prev.custom && isFinite(prev.min) && isFinite(prev.max)) {
-            return { min: prev.min, max: prev.max, custom: true }
-        }
-        const def = this.mappings.defaultRange
-        if (def && isFinite(def.min) && isFinite(def.max)) {
-            return { min: def.min, max: def.max }
-        }
-        const model = this.c.ctx().getModel()
-        const arg = model && model.pathIndex.get(path)
-        const v0 = arg ? arg.value : (isFinite(hint) ? hint : 0)
-        const ref = Math.max(Math.abs(v0), 0.5)
-        return { min: v0 < 0 ? -2 * ref : 0, max: 2 * ref }
     }
 
     // one hardware control drives one thing: a fresh learn steals the knob or
@@ -302,16 +291,44 @@ export default class MidiControl {
         }
         if (kind !== 0xb0) return // control change from here on
         if (this.learning && this.learning.path != null && this.learning.mode === 'cc') {
-            const { path, hint } = this.learning
+            const { path } = this.learning
             this.learning = null
             this._releaseControl({ cc: d1 }, ch)
-            this.mappings.params[path] = { cc: d1, ch, ...this._rangeFor(path, hint) }
+            // no range — the knob drives the value relatively, like the fader
+            this.mappings.params[path] = { cc: d1, ch }
             this.persist()
             this.c.renderAll()
         }
         for (const [path, m] of Object.entries(this.mappings.params)) {
-            if (m.cc === d1 && m.ch === ch) this.applyValue(path, m, m.min + (d2 / 127) * (m.max - m.min))
+            if (m.cc === d1 && m.ch === ch) this.applyCC(path, m, d2)
         }
+    }
+
+    // a knob message. With a pinned range the position maps onto min..max;
+    // without one it moves the value like the on-screen fader: relative and
+    // unbounded, one full knob sweep ≈ 2× the value's magnitude at the start
+    // of the burst (a burst ends after the commit idle, so re-grabbing the
+    // knob recalibrates the sensitivity — same as re-grabbing the fader)
+    applyCC(path, m, d2) {
+        if (isFinite(m.min) && isFinite(m.max)) {
+            return this.applyValue(path, m, m.min + (d2 / 127) * (m.max - m.min))
+        }
+        let a = this.active.get(path)
+        if (!a || a.last === undefined) {
+            const model = this.c.ctx().getModel()
+            const arg = model && model.pathIndex.get(path)
+            const cur = a && a.value !== undefined ? a.value : (arg && isFinite(arg.value) ? arg.value : 0)
+            this.applyValue(path, m, cur) // arms the live bind + commit timer
+            a = this.active.get(path)
+            if (!a) return // param can't be driven (missing, noLive, …)
+            a.acc = cur
+            a.scale = Math.max(Math.abs(cur), 0.5)
+            a.last = d2
+            return
+        }
+        a.acc += ((d2 - a.last) / 127) * 2 * a.scale
+        a.last = d2
+        this.applyValue(path, m, a.acc)
     }
 
     runAction(action) {
