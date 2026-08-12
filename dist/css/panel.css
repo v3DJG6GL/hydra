@@ -1596,6 +1596,9 @@
 
 .vj-pair-rail {
   flex: none;
+  position: sticky; /* the way out stays reachable while the modules scroll */
+  top: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1603,6 +1606,19 @@
   border-bottom: 1px solid #2a2e35;
   background: linear-gradient(180deg, #101216, #0a0b0d);
 }
+
+.vj-pair-back {
+  margin-left: auto;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  color: #d6dae0;
+  border: 1px solid #2a2e35;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.vj-pair-back:hover { border-color: #8891a0; }
 .vj-pair-brand { font-weight: 700; font-size: 11px; letter-spacing: 0.32em; color: #d6dae0; white-space: nowrap; }
 .vj-pair-railsep { color: #3a3f48; }
 .vj-pair-railmode { font-size: 10px; letter-spacing: 0.28em; color: #8891a0; }
@@ -1614,9 +1630,11 @@
   color: #8891a0;
 }
 
-/* auto margins center the module but keep it reachable when it overflows a
-   small screen (justify/align-content: center clips the top edge instead) */
-.vj-pair-stage { flex: 1; display: flex; padding: 24px 16px; }
+/* auto margins center the module(s) but keep them reachable when they
+   overflow a small screen (justify/align-content: center clips the top edge
+   instead). Column direction: pairing surfaces can stack several modules
+   (pair a deck + link a TV) and side-by-side squeezes both on a tablet */
+.vj-pair-stage { flex: 1; display: flex; flex-direction: column; padding: 24px 16px; gap: 18px; }
 .vj-pair-module {
   margin: auto;
   width: 100%;

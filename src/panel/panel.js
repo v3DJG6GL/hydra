@@ -1225,7 +1225,7 @@ export default class VJPanel {
             if (this.state.vjRemote) {
                 const pairPage = el(d, 'button', 'vj-railbtn')
                 pairPage.appendChild(el(d, 'i', 'fas fa-qrcode'))
-                pairPage.title = this.tr('panel.pair-page', 'pair a tablet / phone: opens the pairing page with QR code + deck link (keep it off the projector)')
+                pairPage.title = this.tr('panel.pair-page', 'pair a tablet / phone or link a TV: opens the pairing page with QR code, deck link and display approval (keep it off the projector)')
                 pairPage.onclick = () => window.open('deck.html', '_blank')
                 rail.appendChild(pairPage)
             }

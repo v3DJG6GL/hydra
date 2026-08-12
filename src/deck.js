@@ -202,8 +202,7 @@ function showPairScreen(error) {
             bay: qrBay(url),
             eyebrow: 'PAIR A DECK',
             title: 'Control this renderer from a tablet or phone',
-            explainer: 'Open this link on the device that will run the deck — scan the code, or copy the link across. Anyone with the link has full control of the visuals. ' +
-                'Linking a TV that shows a pairing code? Open the deck below, then tap the QR button in its top rail.',
+            explainer: 'Open this link on the device that will run the deck — scan the code, or copy the link across. Anyone with the link has full control of the visuals.',
             children: [linkRow(url), here, rot]
         })
     } else {
@@ -234,6 +233,26 @@ function showPairScreen(error) {
         })
     }
     stage.appendChild(mod)
+
+    // one pairing page for everything: when this browser also holds the
+    // renderer's pairing (same profile as the hydra tab), those credentials
+    // authorize display approval too — open a lightweight deck connection so
+    // "LINK A TV / DISPLAY" works right here, without opening the full deck
+    if (localRoom && localToken) {
+        const probe = new RemoteHost({ url: relayUrl(), room: localRoom, token: localToken })
+        let added = false
+        probe.on('status', () => {
+            if (added || !probe.connected) return
+            if (!(probe.caps && probe.caps.includes('pair'))) return
+            added = true
+            stage.appendChild(displayLinkModule(probe))
+        })
+        probe.on('pair-event', (ev) => {
+            if (ev.code === 'linked') toast('display "' + (ev.display && ev.display.name) + '" linked')
+            else if (ev.code === 'confirm-timeout') toast('TV did not confirm in time — approve a fresh code', 'error')
+        })
+    }
+
     wrap.appendChild(stage)
     pairEl.appendChild(wrap)
 }
@@ -247,7 +266,7 @@ function renderQr(el, url) {
 // "LINK A TV / DISPLAY": approve the short code a pairing display shows on
 // its screen. The code is single-use and useless without this approval, so
 // a projected/visible TV screen leaks nothing (unlike the deck QR).
-function displayLinkModule(host) {
+function displayLinkModule(host, opts = {}) {
     const bay = h('div', 'vj-pair-qrbay')
     const form = h('form', 'vj-pair-form')
     const code = h('input', 'vj-pair-in')
@@ -310,6 +329,8 @@ function displayLinkModule(host) {
                     ? 'approved — now press OK on the TV to finish'
                     : 'display "' + (res.display && res.display.name) + '" linked')
                 refreshList()
+                // instant link (no TV-side confirm): the job here is done
+                if (res.state !== 'awaiting-confirm' && opts.onLinked) opts.onLinked()
             }
         })
     }
@@ -334,16 +355,36 @@ function boot({ room, token }) {
     }
     const host = new RemoteHost({ url: relayUrl(), room, token })
     host.fftCapture = new FftCapture(host)
+    let pairOverlay = null
+    const closePairOverlay = () => {
+        if (pairOverlay) pairOverlay.remove()
+        pairOverlay = null
+    }
     host.on('pair-event', (ev) => {
-        if (ev.code === 'linked') toast('display "' + (ev.display && ev.display.name) + '" linked')
-        else if (ev.code === 'confirm-timeout') toast('TV did not confirm in time — approve a fresh code', 'error')
+        if (ev.code === 'linked') {
+            toast('display "' + (ev.display && ev.display.name) + '" linked')
+            closePairOverlay() // TV confirmed — drop straight back to the deck
+        } else if (ev.code === 'confirm-timeout') {
+            toast('TV did not confirm in time — approve a fresh code', 'error')
+        }
     })
     // "pair another device": this deck shows its own pairing as a QR overlay
     host.requestPairUi = () => {
+        closePairOverlay()
         const overlay = h('div', 'vj-remote-pair')
+        // sticky rail with an always-reachable way back — the stacked modules
+        // scroll on a tablet and a CLOSE buried inside one of them isn't it
+        const rail = h('div', 'vj-pair-rail')
+        rail.appendChild(h('span', 'vj-pair-brand', 'HYDRA VJ DECK'))
+        rail.appendChild(h('span', 'vj-pair-railsep', '/'))
+        rail.appendChild(h('span', 'vj-pair-railmode', 'PAIRING'))
+        const back = h('button', 'vj-pair-back', '✕ BACK TO DECK')
+        back.onclick = closePairOverlay
+        rail.appendChild(back)
+        overlay.appendChild(rail)
         const url = deckUrl(location.origin, room, token)
         const close = h('button', 'vj-pair-btn', 'CLOSE')
-        close.onclick = () => overlay.remove()
+        close.onclick = closePairOverlay
         const stage = h('div', 'vj-pair-stage')
         stage.appendChild(pairModule({
             bay: qrBay(url),
@@ -353,10 +394,13 @@ function boot({ room, token }) {
             children: [linkRow(url), close]
         }))
         // short-code display pairing needs a relay that speaks it
-        if (host.caps && host.caps.includes('pair')) stage.appendChild(displayLinkModule(host))
+        if (host.caps && host.caps.includes('pair')) {
+            stage.appendChild(displayLinkModule(host, { onLinked: closePairOverlay }))
+        }
         overlay.appendChild(stage)
-        overlay.onclick = (e) => { if (e.target === overlay || e.target === stage) overlay.remove() }
+        overlay.onclick = (e) => { if (e.target === overlay || e.target === stage) closePairOverlay() }
         document.body.appendChild(overlay)
+        pairOverlay = overlay
     }
     const panel = new VJPanel(state, () => {}, host)
     panel.remoteRoot = rootEl
