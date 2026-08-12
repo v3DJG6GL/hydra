@@ -237,17 +237,40 @@ export default class MidiControl {
         this.applyValue(path, m, cur >= (m.min + m.max) / 2 ? m.min : m.max)
     }
 
+    // setup rows (speed = / bpm = / a.setSmooth() …) are globals, not shader
+    // uniforms — LiveBind can't drive them (a shadow eval would turn `speed`
+    // into a function). Their fader's live() path is a direct setter call;
+    // MIDI takes the same road.
+    _setupStmtFor(model, arg) {
+        return (model.statements || []).find((s) => s.kind === 'setup' && s.arg === arg) || null
+    }
+
     applyValue(path, m, raw) {
         const ctx = this.c.ctx()
         const model = ctx.getModel()
         if (!model) return
         const arg = model.pathIndex.get(path)
         if (!arg || arg.kind !== 'number' || arg.noLive) return
-        const value = parseFloat(raw.toFixed(4))
+        let value = parseFloat(raw.toFixed(4))
         let a = this.active.get(path)
         if (!a) {
             a = {}
             this.active.set(path, a)
+        }
+        const setup = this._setupStmtFor(model, arg)
+        if (setup) {
+            if (setup.sub === 'audioSet') {
+                if (setup.fn === 'setBins') value = Math.max(1, Math.round(value))
+                this.c.host.audioCall(setup.fn, value)
+            } else {
+                this.c.host.setGlobal(setup.sub, value)
+            }
+            a.setup = true
+            a.value = value
+            this.c.flashParamValue(path, value)
+            clearTimeout(a.timer)
+            a.timer = setTimeout(() => this.commit(path), COMMIT_IDLE_MS)
+            return
         }
         if (!a.key || !this.c.lb.isLive(path)) {
             const key = this.c.lb.ensure(ctx, path, value)
@@ -272,6 +295,14 @@ export default class MidiControl {
         const model = ctx.getModel()
         const arg = model && model.pathIndex.get(path)
         if (!arg || arg.kind !== 'number') return
+        if (a.setup) {
+            // the live global/setter already carries the value (applyValue) —
+            // text splice only, same as the setup fader's commit
+            const setup = this._setupStmtFor(model, arg)
+            if (setup && setup.sub !== 'audioSet') this.c.host.setGlobal(setup.sub, parseFloat(fmtNumber(a.value)))
+            this.c.applyQuiet(edits.setNumber(arg, a.value))
+            return
+        }
         if (a.key && this.c.lb.isLive(path)) {
             // the program already shows this value through its uniform —
             // write the text only (no eval, no setup side effects)

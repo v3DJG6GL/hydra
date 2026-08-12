@@ -246,9 +246,15 @@ export default class VJPanel {
     }
 
     renderAll() {
-        // a re-render invalidates any open popover's anchor (and would orphan
-        // its node + document listener when the root is wiped) — close it first
-        this.closePopover()
+        // an open menu must survive background rebuilds — once a MIDI mapping
+        // is streaming, quiet commits rebuild the deck every ~600ms and would
+        // otherwise slam every popover shut (and long-press menus would never
+        // get a chance to open). Defer the rebuild until the popover closes;
+        // readouts stay fresh via flashParamValue in the meantime.
+        if (this._popover) {
+            this._renderQueued = true
+            return
+        }
         if (this.dockRoot && !this.state.panel.popup && !this.state.panel.pip) this.renderInto(this.dockRoot)
         if (this.popupRoot && this.popupWin && !this.popupWin.closed) this.renderInto(this.popupRoot)
         if (this.pipRoot && this.pipWin) this.renderInto(this.pipRoot)
@@ -954,7 +960,11 @@ export default class VJPanel {
                 doc.addEventListener('pointercancel', later, true)
                 // failsafe: never leave the deck eating clicks
                 win.setTimeout(unswallow, 1500)
-                target.dispatchEvent(new win.MouseEvent('contextmenu', {
+                // a background rebuild (MIDI commit, remote edit) may have
+                // wiped the pressed element mid-hold — aim at whatever now
+                // sits under the finger instead of a detached node
+                const at = target.isConnected ? target : doc.elementFromPoint(x0, y0)
+                if (at) at.dispatchEvent(new win.MouseEvent('contextmenu', {
                     bubbles: true, cancelable: true, view: win, clientX: x0, clientY: y0
                 }))
             }, 500)
@@ -982,6 +992,9 @@ export default class VJPanel {
         const editHadFocus = keepEdit && keepEdit.contains(d.activeElement)
         const editSel = editHadFocus && keepEdit._ta
             ? { s: keepEdit._ta.selectionStart, e: keepEdit._ta.selectionEnd, top: keepEdit._ta.scrollTop } : null
+        // the wipe detaches any mid-drag chip along with its pointer handlers,
+        // so the flag that mutes long-press menus would never reset
+        this._touchDrag = false
         root.textContent = ''
         root.appendChild(this.renderToprail(d, root))
         if (this.previewOn && this.isAuxRoot(root)) {
@@ -1364,6 +1377,13 @@ export default class VJPanel {
             },
             commit: (v) => this.applyQuiet(edits.setNumber(stmt.arg, norm(v)))
         })
+        rowEl.dataset.path = stmt.arg.path
+        if (this.midi.isMapped(stmt.arg.path)) rowEl.classList.add('vj-midimapped')
+        if (this.midi.isLearning(stmt.arg.path)) track.classList.add('vj-learning')
+        track.oncontextmenu = (e) => {
+            e.preventDefault()
+            this.openSetupMenu(d, this.hostRootFor(track), track, stmt.arg)
+        }
         this.attachValueEdit(d, valueEl, {
             get: () => current,
             set: (v) => {
@@ -1946,44 +1966,62 @@ export default class VJPanel {
         return { label: this.tr('panel.midi-unavailable', 'midi: needs https or localhost'), info: true, fn: () => {} }
     }
 
-    // right-click menu on a fader: MIDI learn/unlearn/range, bind to audio/mouse
-    openParamMenu(d, root, anchor, arg) {
+    // the shared MIDI learn/unlearn/range block, keyed by a stable arg path —
+    // used by the sketch-param fader menu and the setup-row (speed/bpm/audio
+    // setting) menu alike
+    midiMenuItems(d, root, anchor, arg) {
         const items = []
         if (!this.midi.available) {
             items.push(this.midiHintItem())
+            return items
         }
-        if (this.midi.available) {
-            if (this.midi.isLearning(arg.path)) {
-                items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
-            } else {
-                items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob)'), fn: () => this.midi.startLearn(arg.path) })
-                items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: toggle (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'toggle') })
-                items.push({ label: this.tr('panel.midi-learn-push', 'midi button: hold (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'push') })
-            }
-            if (this.midi.isMapped(arg.path)) {
-                const m = this.midi.mappings.params[arg.path]
-                items.push({
-                    // surface the active range — hardware sweeps the whole
-                    // of it, and this is where to widen it
-                    label: this.tr('panel.midi-range', 'midi range…') + ` (${fmtNumber(m.min)} to ${fmtNumber(m.max)})`,
-                    keepOpen: true,
-                    fn: () => this.openMidiRange(d, root, anchor, arg)
-                })
-                items.push({ label: this.tr('panel.midi-unlearn', 'midi unlearn'), fn: () => this.midi.unlearn(arg.path), danger: true })
-            }
+        if (this.midi.isLearning(arg.path)) {
+            items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
+        } else {
+            items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob)'), fn: () => this.midi.startLearn(arg.path) })
+            items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: toggle (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'toggle') })
+            items.push({ label: this.tr('panel.midi-learn-push', 'midi button: hold (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'push') })
         }
+        if (this.midi.isMapped(arg.path)) {
+            const m = this.midi.mappings.params[arg.path]
+            items.push({
+                // surface the active range — hardware sweeps the whole
+                // of it, and this is where to widen it
+                label: this.tr('panel.midi-range', 'midi range…') + ` (${fmtNumber(m.min)} to ${fmtNumber(m.max)})`,
+                keepOpen: true,
+                fn: () => this.openMidiRange(d, root, anchor, arg)
+            })
+            items.push({ label: this.tr('panel.midi-unlearn', 'midi unlearn'), fn: () => this.midi.unlearn(arg.path), danger: true })
+        }
+        return items
+    }
+
+    // right-click on a speed/bpm/audio-setting fader: MIDI only — no fft or
+    // mouse binds, those globals must stay plain numbers
+    openSetupMenu(d, root, anchor, arg) {
+        this.openItemsMenu(d, root, anchor, this.midiMenuItems(d, root, anchor, arg))
+    }
+
+    // right-click menu on a fader: MIDI learn/unlearn/range, bind to audio/mouse
+    openParamMenu(d, root, anchor, arg) {
+        const items = this.midiMenuItems(d, root, anchor, arg)
+        // menus can now outlive background rebuilds (MIDI commits), so ranges
+        // captured at open time may be stale — re-resolve by path on click
+        const fresh = () => (this.model && this.model.pathIndex.get(arg.path)) || arg
         items.push({
             label: this.tr('panel.bind-audio', 'bind to audio (fft)'),
             fn: () => {
-                const scale = fmtNumber(Math.max(Math.abs(arg.value) * 2, 0.5))
-                this.apply({ from: arg.range[0], to: arg.range[1], text: `() => a.fft[0] * ${scale}` })
+                const a = fresh()
+                const scale = fmtNumber(Math.max(Math.abs(a.value) * 2, 0.5))
+                this.apply({ from: a.range[0], to: a.range[1], text: `() => a.fft[0] * ${scale}` })
             }
         })
         items.push({
             label: this.tr('panel.bind-mouse', 'bind to mouse'),
             fn: () => {
-                const scale = fmtNumber(Math.max(Math.abs(arg.value) * 2, 0.5))
-                this.apply({ from: arg.range[0], to: arg.range[1], text: `() => mouse.x / width * ${scale}` })
+                const a = fresh()
+                const scale = fmtNumber(Math.max(Math.abs(a.value) * 2, 0.5))
+                this.apply({ from: a.range[0], to: a.range[1], text: `() => mouse.x / width * ${scale}` })
             }
         })
         this.openItemsMenu(d, root, anchor, items)
@@ -2394,6 +2432,13 @@ export default class VJPanel {
                 this.applyQuiet(edits.setNumber(stmt.arg, v))
             }
         })
+        rowEl.dataset.path = stmt.arg.path
+        if (this.midi.isMapped(stmt.arg.path)) rowEl.classList.add('vj-midimapped')
+        if (this.midi.isLearning(stmt.arg.path)) track.classList.add('vj-learning')
+        track.oncontextmenu = (e) => {
+            e.preventDefault()
+            this.openSetupMenu(d, this.hostRootFor(track), track, stmt.arg)
+        }
         this.attachValueEdit(d, valueEl, {
             get: () => current,
             set: (v) => {
@@ -2566,6 +2611,16 @@ export default class VJPanel {
             this._popover.remove()
             this._popoverDoc.removeEventListener('pointerdown', this._popoverCloser, true)
             this._popover = null
+        }
+        if (this._renderQueued) {
+            // a replacement popover may open in this same tick (menu item →
+            // sub-menu like "midi range…") — only rebuild once the menu chain
+            // is really done, or the new popover would anchor into a wiped DOM
+            setTimeout(() => {
+                if (this._popover || !this._renderQueued) return
+                this._renderQueued = false
+                this.renderAll()
+            }, 0)
         }
     }
 
