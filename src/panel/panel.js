@@ -416,10 +416,12 @@ export default class VJPanel {
             // as a fallback (e.g. a fresh page load on a scene's URL)
             const active = scene && (i === this.cycle.pos ||
                 (this.cycle.pos < 0 && current !== null && scene.code === current))
+            const sctl = this.midi.sceneControl(i)
             const slot = el(d, 'button', 'vj-scene' + (scene ? ' vj-filled' : '') +
                 (active ? ' vj-active' : '') +
-                (this.midi.isSceneMapped(i) ? ' vj-midimapped' : '') +
+                (sctl ? ' vj-midimapped vj-mc' + sctl.color : '') +
                 (this.midi.isLearningScene(i) ? ' vj-learning' : ''))
+            if (sctl) slot.title = sctl.label
             slot.appendChild(el(d, 'span', 'vj-scene-num', String(i + 1)))
             if (scene && scene.cat) {
                 slot.appendChild(el(d, 'span', 'vj-scene-cat', '⌗' + scene.cat))
@@ -1089,6 +1091,11 @@ export default class VJPanel {
 
         const hush = el(d, 'button', 'vj-hush', 'HUSH')
         hush.title = this.tr('panel.hush', 'stop all outputs (code stays)')
+        const hushCtl = this.midi.actionControl('hush')
+        if (hushCtl) {
+            hush.classList.add('vj-midimapped', 'vj-mc' + hushCtl.color)
+            hush.title += ` — ${hushCtl.label}`
+        }
         hush.onclick = () => this.host.run('hush()')
         hush.oncontextmenu = (e) => {
             e.preventDefault()
@@ -1401,7 +1408,11 @@ export default class VJPanel {
             commit: (v) => this.applyQuiet(edits.setNumber(stmt.arg, norm(v)))
         })
         rowEl.dataset.path = stmt.arg.path
-        if (this.midi.isMapped(stmt.arg.path)) rowEl.classList.add('vj-midimapped')
+        const ctl = this.midi.paramControl(stmt.arg.path)
+        if (ctl) {
+            rowEl.classList.add('vj-midimapped', 'vj-mc' + ctl.color)
+            track.appendChild(el(d, 'span', 'vj-miditag', ctl.label))
+        }
         if (this.midi.isLearning(stmt.arg.path)) track.classList.add('vj-learning')
         rowEl.oncontextmenu = (e) => {
             e.preventDefault()
@@ -1823,7 +1834,11 @@ export default class VJPanel {
             }
         })
         if (arg && arg.kind === 'number' && arg.path && !arg.noLive) {
-            if (this.midi.isMapped(arg.path)) rowEl.classList.add('vj-midimapped')
+            const ctl = this.midi.paramControl(arg.path)
+            if (ctl) {
+                rowEl.classList.add('vj-midimapped', 'vj-mc' + ctl.color)
+                track.appendChild(el(d, 'span', 'vj-miditag', ctl.label))
+            }
             if (this.midi.isLearning(arg.path)) track.classList.add('vj-learning')
             // the whole row (label + value too), not just the thin track —
             // a long-press or right-click shouldn't need pixel aim
@@ -2016,14 +2031,24 @@ export default class VJPanel {
         }
         if (this.midi.isMapped(arg.path)) {
             const m = this.midi.mappings.params[arg.path]
+            const ctl = this.midi.paramControl(arg.path)
+            if (m.cc !== undefined) {
+                items.push({
+                    // surface the active range — hardware sweeps the whole
+                    // of it, and this is where to widen it
+                    label: this.tr('panel.midi-range', 'midi range…') + ` (${fmtNumber(m.min)} to ${fmtNumber(m.max)})`,
+                    keepOpen: true,
+                    fn: () => this.openMidiRange(d, root, anchor, arg)
+                })
+            } else {
+                // pads have no range: they mute/unmute the param
+                items.push({ label: this.tr('panel.midi-pad-info', 'pad mutes / unmutes (no range)'), info: true, fn: () => {} })
+            }
             items.push({
-                // surface the active range — hardware sweeps the whole
-                // of it, and this is where to widen it
-                label: this.tr('panel.midi-range', 'midi range…') + ` (${fmtNumber(m.min)} to ${fmtNumber(m.max)})`,
-                keepOpen: true,
-                fn: () => this.openMidiRange(d, root, anchor, arg)
+                label: this.tr('panel.midi-unlearn', 'midi unlearn') + (ctl ? ` (${ctl.label})` : ''),
+                fn: () => this.midi.unlearn(arg.path),
+                danger: true
             })
-            items.push({ label: this.tr('panel.midi-unlearn', 'midi unlearn'), fn: () => this.midi.unlearn(arg.path), danger: true })
         }
         return items
     }
@@ -2099,10 +2124,11 @@ export default class VJPanel {
         })
     }
 
-    // min/max editor for an existing MIDI mapping
+    // min/max editor for an existing MIDI mapping (knobs only — pads carry
+    // no range, they mute/unmute)
     openMidiRange(d, root, anchor, arg) {
         const m = this.midi.mappings.params[arg.path]
-        if (!m) return
+        if (!m || m.cc === undefined) return
         this.openPopover(d, root, anchor, (pop) => {
             pop.classList.add('vj-rangeform')
             const mkField = (labelText, value) => {
@@ -2513,7 +2539,11 @@ export default class VJPanel {
             }
         })
         rowEl.dataset.path = stmt.arg.path
-        if (this.midi.isMapped(stmt.arg.path)) rowEl.classList.add('vj-midimapped')
+        const ctl = this.midi.paramControl(stmt.arg.path)
+        if (ctl) {
+            rowEl.classList.add('vj-midimapped', 'vj-mc' + ctl.color)
+            track.appendChild(el(d, 'span', 'vj-miditag', ctl.label))
+        }
         if (this.midi.isLearning(stmt.arg.path)) track.classList.add('vj-learning')
         rowEl.oncontextmenu = (e) => {
             e.preventDefault()

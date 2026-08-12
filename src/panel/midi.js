@@ -17,6 +17,21 @@ import { fmtNumber } from './metadata.js'
 const KEY = 'hydra-vj-midi'
 const COMMIT_IDLE_MS = 600
 
+const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+// the identity of the hardware control behind a mapping: a short scribble
+// label ("CC21", "D#2·2" — channel suffix only off channel 1) and one of 8
+// palette slots, so the same knob/pad wears the same color everywhere
+export function controlInfo(m) {
+    if (!m) return null
+    const isCC = m.cc !== undefined
+    const num = isCC ? m.cc : m.note
+    if (typeof num !== 'number') return null
+    const ch = m.ch || 0
+    const name = isCC ? 'CC' + num : NOTE_NAMES[num % 12] + (Math.floor(num / 12) - 2)
+    return { label: name + (ch ? '·' + (ch + 1) : ''), color: ((isCC ? num : num + 128) + ch * 37) % 8 }
+}
+
 function loadMappings() {
     try {
         const m = JSON.parse(localStorage.getItem(KEY))
@@ -100,6 +115,29 @@ export default class MidiControl {
 
     isMapped(path) {
         return !!this.mappings.params[path]
+    }
+
+    paramControl(path) {
+        return controlInfo(this.mappings.params[path])
+    }
+
+    _keyControl(key) {
+        const m = /^n(\d+)c(\d+)$/.exec(key)
+        return m ? controlInfo({ note: +m[1], ch: +m[2] }) : null
+    }
+
+    sceneControl(slot) {
+        for (const [k, v] of Object.entries(this.mappings.scenes)) {
+            if (v === slot) return this._keyControl(k)
+        }
+        return null
+    }
+
+    actionControl(action) {
+        for (const [k, v] of Object.entries(this.mappings.actions)) {
+            if (v === action) return this._keyControl(k)
+        }
+        return null
     }
 
     isLearning(path) {
@@ -234,7 +272,12 @@ export default class MidiControl {
                 if (l.scene != null) this.mappings.scenes[key] = l.scene
                 else if (l.action) this.mappings.actions[key] = l.action
                 else if (l.path != null) {
-                    this.mappings.params[l.path] = { note: d1, ch, mode: l.mode, ...this._rangeFor(l.path, l.hint) }
+                    // pads carry no range: they mute/unmute the param. `on` is
+                    // the fallback level for a param that is 0 at first press
+                    const model = this.c.ctx().getModel()
+                    const arg = model && model.pathIndex.get(l.path)
+                    const v0 = arg ? arg.value : (isFinite(l.hint) ? l.hint : 0)
+                    this.mappings.params[l.path] = { note: d1, ch, mode: l.mode, on: v0 || 1 }
                 }
                 this.learning = null
                 this.persist()
@@ -252,8 +295,8 @@ export default class MidiControl {
         }
         if (kind === 0x80 || (kind === 0x90 && d2 === 0)) { // note off
             for (const [path, m] of Object.entries(this.mappings.params)) {
-                // hold buttons release back to their min
-                if (m.note === d1 && m.ch === ch && m.mode === 'push') this.applyValue(path, m, m.min)
+                // hold buttons release back to silence
+                if (m.note === d1 && m.ch === ch && m.mode === 'push') this.applyValue(path, m, 0)
             }
             return
         }
@@ -275,17 +318,31 @@ export default class MidiControl {
         if (action === 'hush') this.c.host.run('hush()')
     }
 
+    // pads mute/unmute — no range involved. Toggle: a non-zero param
+    // remembers its level and snaps to 0; a zero param comes back to the
+    // remembered level (or the level it had at learn time). Hold: the on
+    // level while pressed, 0 on release. A knob moving the same param
+    // updates what "on" means — whatever value the pad silenced, it restores.
+    _onLevel(m) {
+        // m.max covers pad mappings persisted by older builds (ranged pads)
+        const v = m.prev !== undefined ? m.prev : (m.on !== undefined ? m.on : m.max)
+        return isFinite(v) && v !== 0 ? v : 1
+    }
+
     pressButton(path, m) {
-        if (m.mode === 'push') return this.applyValue(path, m, m.max)
-        // toggle: flip to whichever end of the range the param is not at
         const a = this.active.get(path)
         let cur = a && a.value !== undefined ? a.value : null
         if (cur === null) {
             const model = this.c.ctx().getModel()
             const arg = model && model.pathIndex.get(path)
-            cur = arg ? arg.value : m.min
+            cur = arg ? arg.value : 0
         }
-        this.applyValue(path, m, cur >= (m.min + m.max) / 2 ? m.min : m.max)
+        if (cur) {
+            m.prev = cur
+            this.persist()
+        }
+        if (m.mode === 'push') return this.applyValue(path, m, this._onLevel(m))
+        this.applyValue(path, m, cur ? 0 : this._onLevel(m))
     }
 
     // setup rows (speed = / bpm = / a.setSmooth() …) are globals, not shader

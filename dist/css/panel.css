@@ -21,6 +21,16 @@
   --vj-cat-color: #e07dae;
   --vj-cat-combine: #7de0ad;
   --vj-cat-combineCoord: #e0c47d;
+  /* midi control identity palette — controlInfo() in midi.js hashes each
+     hardware knob/pad into one of these, stable everywhere it appears */
+  --vj-mc-0: #ff2d6b;
+  --vj-mc-1: #23e0a0;
+  --vj-mc-2: #4da6ff;
+  --vj-mc-3: #ffb000;
+  --vj-mc-4: #b06bff;
+  --vj-mc-5: #2adbd4;
+  --vj-mc-6: #a8e02d;
+  --vj-mc-7: #ff7052;
 
   background: var(--vj-chassis);
   color: var(--vj-silkscreen);
@@ -364,11 +374,48 @@
 
 /* ---------- midi states ---------- */
 
-.vj-midimapped > .vj-label::after {
-  content: '•';
-  color: var(--vj-o1);
-  margin-left: 3px;
+/* each mapped row inherits its hardware control's identity color */
+.vj-mc0 { --vj-mc: var(--vj-mc-0); }
+.vj-mc1 { --vj-mc: var(--vj-mc-1); }
+.vj-mc2 { --vj-mc: var(--vj-mc-2); }
+.vj-mc3 { --vj-mc: var(--vj-mc-3); }
+.vj-mc4 { --vj-mc: var(--vj-mc-4); }
+.vj-mc5 { --vj-mc: var(--vj-mc-5); }
+.vj-mc6 { --vj-mc: var(--vj-mc-6); }
+.vj-mc7 { --vj-mc: var(--vj-mc-7); }
+
+/* patched wire: a colored edge marks the row, and a scribble tag naming
+   the control (CC21 / D#2) sits in the fader track's right end */
+.vj-param.vj-midimapped,
+.vj-setup-row.vj-midimapped {
+  box-shadow: inset 2px 0 0 var(--vj-mc, var(--vj-o1));
+  border-radius: 2px;
 }
+
+.vj-midimapped > .vj-label { color: var(--vj-silkscreen); }
+
+.vj-miditag {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: 2px;
+  color: var(--vj-mc, var(--vj-o1));
+  background: rgba(10, 11, 13, 0.85);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* keep the fill readable while a finger is on the fader */
+.vj-fader.vj-armed .vj-miditag,
+.vj-fader.vj-fine .vj-miditag { opacity: 0.2; }
+
+.vj-hush.vj-midimapped { box-shadow: inset 0 -2px 0 var(--vj-mc, var(--vj-o1)); }
 
 .vj-fader.vj-learning {
   border-color: var(--vj-armed);
@@ -977,9 +1024,10 @@
 .vj-menu-item.vj-info { opacity: 0.55; font-style: italic; cursor: default; }
 .vj-menu-item.vj-info:hover { background: none; }
 
-/* pulse on the row a hardware midi control is currently driving */
-.vj-midiflash {
-  box-shadow: inset 0 0 0 1px var(--vj-armed);
+/* pulse on the row a hardware midi control is currently driving — in the
+   control's own color (doubled class so it outranks the wire edge) */
+.vj-midiflash.vj-midiflash {
+  box-shadow: inset 0 0 0 1px var(--vj-mc, var(--vj-armed));
   border-radius: 2px;
   transition: box-shadow 0.15s;
 }
@@ -1284,7 +1332,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--vj-o1);
+  background: var(--vj-mc, var(--vj-o1));
   z-index: 1;
 }
 
