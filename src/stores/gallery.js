@@ -1,5 +1,6 @@
 import request from 'superagent'
 import examples from './examples.json'
+import { captureFrame } from '../panel/frame-capture.js'
 const sketches = []
 
 const license = `// licensed with CC BY-NC-SA 4.0 https://creativecommons.org/licenses/by-nc-sa/4.0/`
@@ -216,7 +217,7 @@ ${code}
   shareSketch(code, hydra, name) {
     this.saveSketch(code, () => {
       console.log("URL is", this.url, 'sketch is', this.current)
-      hydra.getScreenImage((img) => {
+      captureFrame(hydra, (img) => {
         request
           // .post('/image')
           .post(`${this.state.serverURL}/image`)

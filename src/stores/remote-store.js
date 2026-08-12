@@ -12,6 +12,7 @@ import { codeHash, relayUrl, randomId } from '../panel/wire.js'
 import { fmtNumber } from '../panel/metadata.js'
 import * as fftBus from '../lib/fft-bus.js'
 import { saveCooldownSecs } from '../panel/scenes.js'
+import { captureFrame as grabFrame } from '../panel/frame-capture.js'
 import { isDisplay, applyTier, currentTier, collectDiag, showReplacedOverlay } from '../lib/display-mode.js'
 
 const ROOM_KEY = 'hydra-vj-room'
@@ -524,7 +525,9 @@ export default function remoteStore(state, emitter) {
         const done = () => { if (!settled) { settled = true; frameBusy = false } }
         const guard = setTimeout(done, 2000) // rendering stalled — skip the frame
         try {
-            hydra.getScreenImage((blob) => {
+            // serialized capture — overlapping getScreenImage calls (this
+            // loop + a scene-save thumbnail) make hydra-synth download a PNG
+            grabFrame(hydra, (blob) => {
                 if (!blob) { clearTimeout(guard); return done() }
                 const url = URL.createObjectURL(blob)
                 const img = new Image()

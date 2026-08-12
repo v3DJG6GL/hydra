@@ -90,6 +90,13 @@ export default class LiveBind {
             return true
         }
         items.sort((a, b) => b.arg.range[0] - a.arg.range[0])
+        // bindings persist across invalidating evals (scene recall, shuffle,
+        // code edits), so re-arming must not resurrect the value a control
+        // wrote LAST time: refresh every uniform from the current text.
+        // Whichever control triggered this ensure() set()s its own target
+        // right after, so the driven param is unaffected — but an idle
+        // binding must show the number that is actually in the code.
+        for (const it of items) window.__vj[it.key] = it.arg.value
         let text = model.text
         for (const it of items) {
             text = text.slice(0, it.arg.range[0]) +
