@@ -91,7 +91,9 @@ export default function panelStore(state, emitter) {
         const randomize = e.code === 'KeyX'
         const group = /^Digit([1-9])$/.exec(e.code) // random scene of group N
         if (!toggle && !random && !randomize && !group) return
-        if (e.target && e.target.closest && e.target.closest('.CodeMirror')) return
+        // digits have no CodeMirror binding, so handle them here even with the
+        // editor focused — otherwise the browser default (zoom/tab) wins
+        if (!group && e.target && e.target.closest && e.target.closest('.CodeMirror')) return
         e.preventDefault()
         if (group) {
             ensure().randomSceneCat(+group[1])
