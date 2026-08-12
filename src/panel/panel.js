@@ -2060,9 +2060,23 @@ export default class VJPanel {
             }
             const minIn = mkField(this.tr('panel.midi-range-min', 'min'), m.min)
             const maxIn = mkField(this.tr('panel.midi-range-max', 'max'), m.max)
+            // opt-in deck-wide default: every future learn starts with this
+            // range instead of the auto-derived 0..2×value one
+            const def = this.midi.mappings.defaultRange
+            const defWrap = el(d, 'label', 'vj-midi-default')
+            const cb = el(d, 'input')
+            cb.type = 'checkbox'
+            cb.checked = !!def && def.min === m.min && def.max === m.max
+            defWrap.appendChild(cb)
+            defWrap.appendChild(d.createTextNode(this.tr('panel.midi-range-default', 'use as default for new learns')))
+            pop.appendChild(defWrap)
             const ok = el(d, 'button', 'vj-menu-item', this.tr('panel.midi-range-set', 'set range'))
             const commit = () => {
-                this.midi.setRange(arg.path, parseFloat(minIn.value), parseFloat(maxIn.value))
+                const min = parseFloat(minIn.value)
+                const max = parseFloat(maxIn.value)
+                this.midi.setRange(arg.path, min, max)
+                if (cb.checked) this.midi.setDefaultRange(min, max)
+                else if (def && def.min === m.min && def.max === m.max) this.midi.setDefaultRange(null)
                 this.closePopover()
             }
             ok.onclick = commit
@@ -2074,6 +2088,15 @@ export default class VJPanel {
                 }
             })
             pop.appendChild(ok)
+            if (def) {
+                const clr = el(d, 'button', 'vj-menu-item vj-danger',
+                    this.tr('panel.midi-range-default-clear', `clear default (${fmtNumber(def.min)} to ${fmtNumber(def.max)}) — back to auto`))
+                clr.onclick = () => {
+                    this.midi.setDefaultRange(null)
+                    this.closePopover()
+                }
+                pop.appendChild(clr)
+            }
             setTimeout(() => minIn.focus(), 0)
         })
     }

@@ -22,12 +22,12 @@ function loadMappings() {
         const m = JSON.parse(localStorage.getItem(KEY))
         if (m && typeof m === 'object') {
             if (m.params || m.scenes || m.actions) {
-                return { params: m.params || {}, scenes: m.scenes || {}, actions: m.actions || {} }
+                return { params: m.params || {}, scenes: m.scenes || {}, actions: m.actions || {}, defaultRange: m.defaultRange || null }
             }
-            return { params: m, scenes: {}, actions: {} } // pre-scene flat format
+            return { params: m, scenes: {}, actions: {}, defaultRange: null } // pre-scene flat format
         }
     } catch (e) { /* fresh */ }
-    return { params: {}, scenes: {}, actions: {} }
+    return { params: {}, scenes: {}, actions: {}, defaultRange: null }
 }
 
 export default class MidiControl {
@@ -157,19 +157,46 @@ export default class MidiControl {
         this.persist()
     }
 
-    // a hand-set range survives re-learning; auto-derived ones re-derive
-    // from the value at learn time (0..2× for positives, symmetric for
-    // negatives)
+    // deck-wide default range for NEW learns; null = auto-derive per param
+    setDefaultRange(min, max) {
+        this.mappings.defaultRange = isFinite(min) && isFinite(max) ? { min, max } : null
+        this.persist()
+    }
+
+    // a hand-set range survives re-learning; otherwise the deck default (if
+    // one is set) applies, and failing that the range auto-derives from the
+    // value at learn time (0..2× for positives, symmetric for negatives)
     _rangeFor(path) {
         const prev = this.mappings.params[path]
         if (prev && prev.custom && isFinite(prev.min) && isFinite(prev.max)) {
             return { min: prev.min, max: prev.max, custom: true }
+        }
+        const def = this.mappings.defaultRange
+        if (def && isFinite(def.min) && isFinite(def.max)) {
+            return { min: def.min, max: def.max }
         }
         const model = this.c.ctx().getModel()
         const arg = model && model.pathIndex.get(path)
         const v0 = arg ? arg.value : 0
         const ref = Math.max(Math.abs(v0), 0.5)
         return { min: v0 < 0 ? -2 * ref : 0, max: 2 * ref }
+    }
+
+    // one hardware control drives one thing: a fresh learn steals the knob or
+    // pad from whatever held it before — params, scene pads and actions alike
+    _releaseControl(ctl, ch) {
+        for (const [path, m] of Object.entries(this.mappings.params)) {
+            if (m.ch !== ch) continue
+            if ((ctl.cc !== undefined && m.cc === ctl.cc) ||
+                (ctl.note !== undefined && m.note === ctl.note)) {
+                delete this.mappings.params[path]
+            }
+        }
+        if (ctl.note !== undefined) {
+            const key = `n${ctl.note}c${ch}`
+            delete this.mappings.scenes[key]
+            delete this.mappings.actions[key]
+        }
     }
 
     // exported separately from the event plumbing so it can be driven in tests
@@ -181,11 +208,13 @@ export default class MidiControl {
             const key = `n${d1}c${ch}`
             if (this.learning) {
                 const l = this.learning
+                if (l.path != null && l.mode === 'cc') return // knob learn armed — pads don't complete it
+                this._releaseControl({ note: d1 }, ch)
                 if (l.scene != null) this.mappings.scenes[key] = l.scene
                 else if (l.action) this.mappings.actions[key] = l.action
-                else if (l.path != null && l.mode !== 'cc') {
+                else if (l.path != null) {
                     this.mappings.params[l.path] = { note: d1, ch, mode: l.mode, ...this._rangeFor(l.path) }
-                } else return // knob learn armed — pads don't complete it
+                }
                 this.learning = null
                 this.persist()
                 this.c.renderAll()
@@ -211,6 +240,7 @@ export default class MidiControl {
         if (this.learning && this.learning.path != null && this.learning.mode === 'cc') {
             const path = this.learning.path
             this.learning = null
+            this._releaseControl({ cc: d1 }, ch)
             this.mappings.params[path] = { cc: d1, ch, ...this._rangeFor(path) }
             this.persist()
             this.c.renderAll()

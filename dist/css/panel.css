@@ -977,6 +977,17 @@
 .vj-menu-item.vj-info { opacity: 0.55; font-style: italic; cursor: default; }
 .vj-menu-item.vj-info:hover { background: none; }
 
+/* "use as default for new learns" row in the midi range editor */
+.vj-midi-default {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 10px;
+  color: var(--vj-silkscreen);
+  cursor: pointer;
+}
+
 .vj-menu-sep {
   height: 1px;
   margin: 4px 2px;
