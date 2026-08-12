@@ -20,9 +20,14 @@ ENV HYDRA_RELAY_HOST=hydra-relay \
 # runtime uid:gid (compose `user:` overrides, e.g. 568:568), same spirit as
 # the base image's arbitrary-uid support
 USER root
-RUN rm -f /etc/nginx/conf.d/default.conf && chmod 1777 /etc/nginx/conf.d
+RUN rm -f /etc/nginx/conf.d/default.conf && chmod 1777 /etc/nginx/conf.d \
+    # self-signed cert for the :8443 LAN-https listener, generated at first
+    # boot (any runtime uid — hence 1777, like conf.d above)
+    && apk add --no-cache openssl \
+    && mkdir /certs && chmod 1777 /certs
+COPY --chmod=755 docker/gen-selfsigned-cert.sh /docker-entrypoint.d/05-hydra-selfsigned-cert.sh
 USER 101
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 8080
+EXPOSE 8080 8443
 HEALTHCHECK --interval=30s --timeout=3s \
   CMD wget -qO /dev/null http://127.0.0.1:8080/ || exit 1

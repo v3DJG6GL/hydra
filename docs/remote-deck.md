@@ -120,6 +120,17 @@ show whichever source is live.
   router / access point. Note: for microphone reactivity the Pi's own browser
   must load the app via `http://localhost:8080` (secure-context rule), not
   its LAN IP.
+- **LAN over https (`:8443`)**: the same stack also serves
+  `https://<pi>:8443` with a self-signed certificate (generated on first
+  start, persisted in the `hydra-certs` volume). Load the *deck* from there
+  and accept the certificate warning once per device — the deck is then a
+  secure context, so **Web MIDI, the deck's own mic (FFT source) and screen
+  wake lock work on LAN** without browser flags. Caveats: the browser keeps
+  its "not secure" badge, and Chrome refuses service workers on cert-error
+  origins, so no PWA install/offline cache (install a real/mkcert cert into
+  the volume to get those too). Keep the Pi's kiosk browser on
+  `http://localhost:8080` — that also keeps the relay's preview budgets in
+  LAN mode, which is detected from the *renderer's* origin scheme.
 - **WAN** (deck and renderer can be on different networks entirely): everyone
   — the Pi's kiosk browser *and* the decks — loads the public HTTPS
   deployment. All connections go outbound over `wss://`, so no port
@@ -152,7 +163,9 @@ away, no re-scanning.
 - **LAN/http mode**: plain http is not a secure context, so Chrome offers no
   install and no offline cache — "Add to home screen" just makes a browser
   shortcut. iOS's Add to Home Screen still gives a standalone fullscreen
-  deck. For the full app experience on Android, use WAN mode.
+  deck. For the full app experience on Android, use WAN mode. (The `:8443`
+  self-signed listener unlocks MIDI/mic/wake-lock but not PWA install —
+  service workers require a certificate the browser actually trusts.)
 
 Installing changes nothing about pairing or security: the app is just
 `deck.html`, and **rotate pairing** logs installed decks out like any other.

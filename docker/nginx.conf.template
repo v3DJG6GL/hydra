@@ -1,5 +1,12 @@
 server {
     listen 8080;
+    # https twin of the same site, for LAN rigs: a deck loaded over :8443
+    # (after accepting the self-signed-cert warning once per device) is a
+    # secure context, which unlocks Web MIDI, the tablet mic and wake lock.
+    # The cert is generated on first boot by docker/gen-selfsigned-cert.sh.
+    listen 8443 ssl;
+    ssl_certificate /certs/hydra.crt;
+    ssl_certificate_key /certs/hydra.key;
     server_name _;
     root /usr/share/nginx/html;
     index index.html;

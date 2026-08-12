@@ -15,11 +15,27 @@ services:
     ports:
       # host:container — serve on http://<server>:8080
       - "8080:8080"
+      # same site over https with a self-signed cert (generated on first
+      # start into the hydra-certs volume). For LAN rigs: open
+      # https://<server>:8443/deck.html… on each controlling device, accept
+      # the certificate warning once, and the deck is a secure context —
+      # Web MIDI, tablet mic and wake lock work without any browser flags.
+      # Keep the Pi's own kiosk browser on http://localhost:8080 (that also
+      # keeps the relay in LAN preview mode — see budgets below).
+      - "8443:8443"
     # nginx proxies /ws to the relay; override when your relay service or
     # network alias is named differently (defaults shown):
     # environment:
     #   HYDRA_RELAY_HOST: hydra-relay
     #   HYDRA_RELAY_PORT: "8081"
+    #   # SANs baked into the generated cert (cosmetic while self-signed;
+    #   # delete the hydra-certs volume to regenerate after changing):
+    #   HYDRA_TLS_SAN: DNS:localhost,IP:127.0.0.1,IP:192.168.88.100
+    volumes:
+      # the self-signed TLS cert — persisting it keeps the per-device
+      # "accept the risk" exceptions valid across container recreates.
+      # Drop your own hydra.crt/hydra.key in here to replace it.
+      - hydra-certs:/certs
 
   # WebSocket relay for the remote VJ deck (tablet/laptop controlling this
   # instance). nginx inside `hydra` proxies /ws here — no extra published
@@ -65,3 +81,4 @@ services:
 
 volumes:
   hydra-relay-data:
+  hydra-certs:
