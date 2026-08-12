@@ -973,6 +973,9 @@
 
 .vj-menu-item:hover { background: var(--vj-chassis); }
 .vj-menu-item.vj-danger:hover { background: var(--vj-armed); color: #fff; }
+/* explanatory row (e.g. "midi needs https or localhost") — not clickable */
+.vj-menu-item.vj-info { opacity: 0.55; font-style: italic; cursor: default; }
+.vj-menu-item.vj-info:hover { background: none; }
 
 .vj-menu-sep {
   height: 1px;

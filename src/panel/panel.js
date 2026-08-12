@@ -526,6 +526,9 @@ export default class VJPanel {
 
     openSceneMenu(d, root, anchor, i, scene) {
         const items = []
+        if (!this.midi.available) {
+            items.push(this.midiHintItem())
+        }
         if (this.midi.available) {
             if (this.midi.isLearningScene(i)) {
                 items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
@@ -559,7 +562,8 @@ export default class VJPanel {
                     pop.appendChild(this.buildGroupRow(d, i, scene))
                     return
                 }
-                const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : ''), item.label)
+                const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : '') + (item.info ? ' vj-info' : ''), item.label)
+                if (item.info) b.disabled = true
                 b.onclick = (e) => {
                     e.stopPropagation()
                     this.closePopover()
@@ -1052,8 +1056,11 @@ export default class VJPanel {
         hush.onclick = () => this.host.run('hush()')
         hush.oncontextmenu = (e) => {
             e.preventDefault()
-            if (!this.midi.available) return
             const items = []
+            if (!this.midi.available) {
+                this.openItemsMenu(d, this.hostRootFor(hush), hush, [this.midiHintItem()])
+                return
+            }
             if (this.midi.isLearningAction('hush')) {
                 items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
             } else {
@@ -1933,9 +1940,18 @@ export default class VJPanel {
         return sel
     }
 
+    // Web MIDI only exists in secure contexts (https / localhost) — on a
+    // plain-http LAN deck say so instead of silently hiding the learn options
+    midiHintItem() {
+        return { label: this.tr('panel.midi-unavailable', 'midi: needs https or localhost'), info: true, fn: () => {} }
+    }
+
     // right-click menu on a fader: MIDI learn/unlearn/range, bind to audio/mouse
     openParamMenu(d, root, anchor, arg) {
         const items = []
+        if (!this.midi.available) {
+            items.push(this.midiHintItem())
+        }
         if (this.midi.available) {
             if (this.midi.isLearning(arg.path)) {
                 items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
@@ -1976,7 +1992,8 @@ export default class VJPanel {
     openItemsMenu(d, root, anchor, items) {
         this.openPopover(d, root, anchor, (pop) => {
             items.forEach((item) => {
-                const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : ''), item.label)
+                const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : '') + (item.info ? ' vj-info' : ''), item.label)
+                if (item.info) b.disabled = true
                 b.onclick = (e) => {
                     e.stopPropagation()
                     if (!item.keepOpen) this.closePopover()
@@ -2467,7 +2484,8 @@ export default class VJPanel {
         }
         this.openPopover(d, root, anchor, (pop) => {
             items.forEach((item) => {
-                const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : ''), item.label)
+                const b = el(d, 'button', 'vj-menu-item' + (item.danger ? ' vj-danger' : '') + (item.info ? ' vj-info' : ''), item.label)
+                if (item.info) b.disabled = true
                 b.onclick = (e) => {
                     e.stopPropagation()
                     if (!item.keepOpen) this.closePopover()
