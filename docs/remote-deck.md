@@ -138,12 +138,22 @@ show whichever source is live.
   (mkcert-style). Make the CA genuinely trusted on each controlling
   device:
 
+  0. **Give the rig a hostname — Firefox/LibreWolf refuse the Web MIDI
+     permission on IP-address origins** ("SitePermsAddons install
+     disallowed when the host is an IP address"), so `https://192.168.…`
+     can never get MIDI there, trusted cert or not. Any LAN name works:
+     a static DNS entry on the router (MikroTik:
+     `/ip dns static add name=hydra.lan address=192.168.88.100`), an
+     `/etc/hosts` line on the controlling machine
+     (`192.168.88.100  hydra.lan`), or the host's mDNS name
+     (`<hostname>.local`) where Avahi runs. Chromium-family browsers are
+     fine with the bare IP.
   1. Set `HYDRA_TLS_SAN` (compose env) to every name/IP the rig is reached
-     by, e.g. `localhost,127.0.0.1,192.168.88.100` (bare entries get their
-     `DNS:`/`IP:` prefixes automatically), then `docker compose up -d` —
-     the cert regenerates by itself whenever this value changes. A trusted
-     import only validates when the SAN matches the URL in the address
-     bar, so this step comes first.
+     by, e.g. `localhost,127.0.0.1,192.168.88.100,hydra.lan` (bare entries
+     get their `DNS:`/`IP:` prefixes automatically), then
+     `docker compose up -d` — the server cert re-issues by itself whenever
+     this value changes. A trusted import only validates when the SAN
+     matches the URL in the address bar, so this step comes first.
   2. On each device, download the CA from `http://<pi>:8080/hydra.crt`
      (it serves `CN=hydra-lan CA`, not the server cert).
   3. Import it as trusted: Firefox/LibreWolf → Settings → Privacy &
@@ -152,10 +162,11 @@ show whichever source is live.
      Security → Encryption & credentials → Install a certificate → CA.
      The CA is created once and survives SAN changes — adding a name/IP
      later re-issues only the server cert, no re-import needed.
-  4. Reload `https://<pi>:8443/deck.html…` — no warning, padlock closed,
-     and Firefox's Web MIDI permission flow works like on a public https
-     deployment. (Firefox side note: it only shows the MIDI prompt when a
-     controller is already connected at browser start.)
+  4. Reload the deck via the hostname —
+     `https://hydra.lan:8443/deck.html…` — no warning, padlock closed, and
+     Firefox's Web MIDI permission add-on prompt can finally appear.
+     (Firefox side note: it only shows the MIDI prompt when a controller
+     is already connected at browser start.)
 
   Keep the Pi's kiosk browser on
   `http://localhost:8080` — that also keeps the relay's preview budgets in
