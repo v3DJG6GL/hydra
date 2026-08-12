@@ -21,6 +21,15 @@ server {
         add_header Cache-Control "no-cache";
     }
 
+    # the public half of the self-signed pair, downloadable so each device
+    # can install it as a trusted authority instead of clicking through the
+    # warning — Firefox/LibreWolf silently refuse Web MIDI on cert-override
+    # origins, and Android wants certs in its user CA store
+    location = /hydra.crt {
+        alias /certs/hydra.crt;
+        default_type application/x-x509-ca-cert;
+    }
+
     # Vite emits content-hashed filenames under /assets — cache forever
     location /assets/ {
         add_header Cache-Control "public, max-age=31536000, immutable";

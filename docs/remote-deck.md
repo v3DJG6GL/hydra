@@ -128,7 +128,30 @@ show whichever source is live.
   wake lock work on LAN** without browser flags. Caveats: the browser keeps
   its "not secure" badge, and Chrome refuses service workers on cert-error
   origins, so no PWA install/offline cache (install a real/mkcert cert into
-  the volume to get those too). Keep the Pi's kiosk browser on
+  the volume to get those too).
+
+  Clicking through the warning is enough for **Chromium-family** browsers
+  (Chrome, Vivaldi, Brave, Edge). **Firefox/LibreWolf are stricter: they
+  silently deny Web MIDI on a cert-override origin** — the fix is to make
+  the cert genuinely trusted on each controlling device:
+
+  1. Set `HYDRA_TLS_SAN` (compose env) to include every name/IP the rig is
+     reached by, e.g. `DNS:localhost,IP:127.0.0.1,IP:192.168.88.100`, then
+     regenerate: `docker compose exec hydra sh -c 'rm -f /certs/hydra.*'`
+     and `docker compose restart hydra`. A trusted import only validates
+     when the SAN matches the URL in the address bar.
+  2. On each device, download the cert from `https://<pi>:8443/hydra.crt`
+     (or `http://<pi>:8080/hydra.crt` to skip the warning while fetching).
+  3. Import it as trusted: Firefox/LibreWolf → Settings → Privacy &
+     Security → Certificates → View Certificates → Authorities → Import →
+     tick "Trust this CA to identify websites". Android → Settings →
+     Security → Encryption & credentials → Install a certificate → CA.
+  4. Reload `https://<pi>:8443/deck.html…` — no warning, padlock closed,
+     and Firefox's Web MIDI permission flow works like on a public https
+     deployment. (Firefox side note: it only shows the MIDI prompt when a
+     controller is already connected at browser start.)
+
+  Keep the Pi's kiosk browser on
   `http://localhost:8080` — that also keeps the relay's preview budgets in
   LAN mode, which is detected from the *renderer's* origin scheme.
 - **WAN** (deck and renderer can be on different networks entirely): everyone
