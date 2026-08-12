@@ -60,13 +60,41 @@ export default class MidiControl {
             this.access = await navigator.requestMIDIAccess()
         } catch (e) {
             console.warn('vj panel: MIDI access denied', e)
+            this.error = (e && e.name) || 'denied'
             return false
         }
+        this.error = null
         const attach = () => {
             this.access.inputs.forEach((input) => { input.onmidimessage = (e) => this.onMessage(e.data) })
         }
         attach()
         this.access.onstatechange = attach
+        return true
+    }
+
+    _toast(msg, kind) {
+        if (this.c.host && this.c.host._fire) this.c.host._fire('toast', msg, kind)
+    }
+
+    // arm a learn — with feedback, since a silently failing "midi learn"
+    // click is indistinguishable from a dead button: the browser may refuse
+    // access (permission prompt dismissed, Firefox without its Web MIDI
+    // site permission), or grant it with no controller plugged in
+    async _arm(learning) {
+        if (!(await this.enable())) {
+            this._toast(this.c.tr('panel.midi-denied',
+                'midi access refused by the browser') + (this.error ? ` (${this.error})` : '') +
+                ' — ' + this.c.tr('panel.midi-denied-hint', 'allow MIDI for this site and retry'), 'error')
+            return false
+        }
+        let inputs = 0
+        this.access.inputs.forEach(() => inputs++)
+        if (!inputs) {
+            this._toast(this.c.tr('panel.midi-no-inputs',
+                'no midi device found — connect a controller (it is picked up automatically)'), 'error')
+        }
+        this.learning = learning
+        this.c.renderAll()
         return true
     }
 
@@ -88,25 +116,16 @@ export default class MidiControl {
 
     // hint: the value to derive the auto range from when the arg isn't in the
     // model yet (a ghost default still being materialized on a remote deck)
-    async startLearn(path, mode, hint) {
-        if (!(await this.enable())) return false
-        this.learning = { path, mode: mode || 'cc', hint }
-        this.c.renderAll()
-        return true
+    startLearn(path, mode, hint) {
+        return this._arm({ path, mode: mode || 'cc', hint })
     }
 
-    async startLearnScene(slot) {
-        if (!(await this.enable())) return false
-        this.learning = { scene: slot }
-        this.c.renderAll()
-        return true
+    startLearnScene(slot) {
+        return this._arm({ scene: slot })
     }
 
-    async startLearnAction(action) {
-        if (!(await this.enable())) return false
-        this.learning = { action }
-        this.c.renderAll()
-        return true
+    startLearnAction(action) {
+        return this._arm({ action })
     }
 
     isActionMapped(action) {
