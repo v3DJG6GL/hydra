@@ -1403,9 +1403,9 @@ export default class VJPanel {
         rowEl.dataset.path = stmt.arg.path
         if (this.midi.isMapped(stmt.arg.path)) rowEl.classList.add('vj-midimapped')
         if (this.midi.isLearning(stmt.arg.path)) track.classList.add('vj-learning')
-        track.oncontextmenu = (e) => {
+        rowEl.oncontextmenu = (e) => {
             e.preventDefault()
-            this.openSetupMenu(d, this.hostRootFor(track), track, stmt.arg)
+            this.openSetupMenu(d, this.hostRootFor(rowEl), track, stmt.arg)
         }
         this.attachValueEdit(d, valueEl, {
             get: () => current,
@@ -1825,9 +1825,18 @@ export default class VJPanel {
         if (arg && arg.kind === 'number' && arg.path && !arg.noLive) {
             if (this.midi.isMapped(arg.path)) rowEl.classList.add('vj-midimapped')
             if (this.midi.isLearning(arg.path)) track.classList.add('vj-learning')
-            track.oncontextmenu = (e) => {
+            // the whole row (label + value too), not just the thin track —
+            // a long-press or right-click shouldn't need pixel aim
+            rowEl.oncontextmenu = (e) => {
                 e.preventDefault()
-                this.openParamMenu(d, this.hostRootFor(track), track, arg)
+                this.openParamMenu(d, this.hostRootFor(rowEl), track, arg)
+            }
+        } else if (!arg && step && step.path && step.meta) {
+            const path = `${step.path}.a${argIdx}`
+            if (this.midi.isLearning(path)) track.classList.add('vj-learning')
+            rowEl.oncontextmenu = (e) => {
+                e.preventDefault()
+                this.openGhostParamMenu(d, this.hostRootFor(rowEl), track, step, input, argIdx)
             }
         }
         this.attachValueEdit(d, valueEl, {
@@ -2023,6 +2032,31 @@ export default class VJPanel {
     // mouse binds, those globals must stay plain numbers
     openSetupMenu(d, root, anchor, arg) {
         this.openItemsMenu(d, root, anchor, this.midiMenuItems(d, root, anchor, arg))
+    }
+
+    // right-click on a ghost fader (a default the code omits): the MIDI items
+    // write the default into the code first, then arm the learn on the path
+    // the materialized arg will hold — the row becomes a normal fader row
+    openGhostParamMenu(d, root, anchor, step, input, argIdx) {
+        if (!this.midi.available) {
+            this.openItemsMenu(d, root, anchor, [this.midiHintItem()])
+            return
+        }
+        const path = `${step.path}.a${argIdx}`
+        const items = []
+        if (this.midi.isLearning(path)) {
+            items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
+        } else {
+            const def = typeof input.default === 'number' && isFinite(input.default) ? input.default : 0
+            const learn = (mode) => {
+                this.apply(edits.ghostArg(step, argIdx, fmtNumber(def)), { replaceURL: true })
+                this.midi.startLearn(path, mode, def)
+            }
+            items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob)'), fn: () => learn() })
+            items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: toggle (hit a pad)'), fn: () => learn('toggle') })
+            items.push({ label: this.tr('panel.midi-learn-push', 'midi button: hold (hit a pad)'), fn: () => learn('push') })
+        }
+        this.openItemsMenu(d, root, anchor, items)
     }
 
     // right-click menu on a fader: MIDI learn/unlearn/range, bind to audio/mouse
@@ -2481,9 +2515,9 @@ export default class VJPanel {
         rowEl.dataset.path = stmt.arg.path
         if (this.midi.isMapped(stmt.arg.path)) rowEl.classList.add('vj-midimapped')
         if (this.midi.isLearning(stmt.arg.path)) track.classList.add('vj-learning')
-        track.oncontextmenu = (e) => {
+        rowEl.oncontextmenu = (e) => {
             e.preventDefault()
-            this.openSetupMenu(d, this.hostRootFor(track), track, stmt.arg)
+            this.openSetupMenu(d, this.hostRootFor(rowEl), track, stmt.arg)
         }
         this.attachValueEdit(d, valueEl, {
             get: () => current,

@@ -168,7 +168,16 @@ function buildChain(links, text, transforms, nested = false, comments = null) {
     const first = links[0]
     if (!first || first.kind !== 'root') return null
     const rootMeta = transforms[first.name]
-    if (!rootMeta || rootMeta.type !== 'src') return null
+    if (rootMeta) {
+        if (rootMeta.type !== 'src') return null
+    } else {
+        // a user-defined generator (pat()…) may head a chain: accept it as an
+        // opaque source when every following call is a known transform — its
+        // .diff(…).mult(…) tail then decomposes into editable steps instead
+        // of collapsing into one frozen expression
+        if (links.length < 2) return null
+        if (!links.slice(1).every((l) => l.kind === 'method' && (transforms[l.name] || l.name === 'out'))) return null
+    }
 
     const source = makeStep(first, text, transforms, comments)
     const steps = []

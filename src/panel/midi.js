@@ -86,9 +86,11 @@ export default class MidiControl {
         return !!this.learning && this.learning.scene === slot
     }
 
-    async startLearn(path, mode) {
+    // hint: the value to derive the auto range from when the arg isn't in the
+    // model yet (a ghost default still being materialized on a remote deck)
+    async startLearn(path, mode, hint) {
         if (!(await this.enable())) return false
-        this.learning = { path, mode: mode || 'cc' }
+        this.learning = { path, mode: mode || 'cc', hint }
         this.c.renderAll()
         return true
     }
@@ -166,7 +168,7 @@ export default class MidiControl {
     // a hand-set range survives re-learning; otherwise the deck default (if
     // one is set) applies, and failing that the range auto-derives from the
     // value at learn time (0..2× for positives, symmetric for negatives)
-    _rangeFor(path) {
+    _rangeFor(path, hint) {
         const prev = this.mappings.params[path]
         if (prev && prev.custom && isFinite(prev.min) && isFinite(prev.max)) {
             return { min: prev.min, max: prev.max, custom: true }
@@ -177,7 +179,7 @@ export default class MidiControl {
         }
         const model = this.c.ctx().getModel()
         const arg = model && model.pathIndex.get(path)
-        const v0 = arg ? arg.value : 0
+        const v0 = arg ? arg.value : (isFinite(hint) ? hint : 0)
         const ref = Math.max(Math.abs(v0), 0.5)
         return { min: v0 < 0 ? -2 * ref : 0, max: 2 * ref }
     }
@@ -213,7 +215,7 @@ export default class MidiControl {
                 if (l.scene != null) this.mappings.scenes[key] = l.scene
                 else if (l.action) this.mappings.actions[key] = l.action
                 else if (l.path != null) {
-                    this.mappings.params[l.path] = { note: d1, ch, mode: l.mode, ...this._rangeFor(l.path) }
+                    this.mappings.params[l.path] = { note: d1, ch, mode: l.mode, ...this._rangeFor(l.path, l.hint) }
                 }
                 this.learning = null
                 this.persist()
@@ -238,10 +240,10 @@ export default class MidiControl {
         }
         if (kind !== 0xb0) return // control change from here on
         if (this.learning && this.learning.path != null && this.learning.mode === 'cc') {
-            const path = this.learning.path
+            const { path, hint } = this.learning
             this.learning = null
             this._releaseControl({ cc: d1 }, ch)
-            this.mappings.params[path] = { cc: d1, ch, ...this._rangeFor(path) }
+            this.mappings.params[path] = { cc: d1, ch, ...this._rangeFor(path, hint) }
             this.persist()
             this.c.renderAll()
         }
