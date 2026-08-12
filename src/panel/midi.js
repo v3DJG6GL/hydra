@@ -298,6 +298,7 @@ export default class MidiControl {
             a.setup = true
             a.value = value
             this.c.flashParamValue(path, value)
+            this.c.revealParam(path)
             clearTimeout(a.timer)
             a.timer = setTimeout(() => this.commit(path), COMMIT_IDLE_MS)
             return
@@ -313,6 +314,7 @@ export default class MidiControl {
         a.value = value
         this.c.lb.set(a.key, value)
         this.c.flashParamValue(path, value)
+        this.c.revealParam(path)
         clearTimeout(a.timer)
         a.timer = setTimeout(() => this.commit(path), COMMIT_IDLE_MS)
     }

@@ -245,6 +245,29 @@ export default class VJPanel {
         })
     }
 
+    // scroll the row a hardware control is driving into view and pulse it —
+    // the deck may be parked anywhere else when the controller takes over.
+    // Throttled per path; stands down while the user is mid-gesture or has a
+    // menu open (never yank the deck out from under a finger).
+    revealParam(path) {
+        if (this._popover || this._touchDrag) return
+        const now = performance.now()
+        if (this._revealPath === path && now - (this._revealAt || 0) < 350) return
+        this._revealPath = path
+        this._revealAt = now
+        const sel = `[data-path="${path.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`
+        ;[this.dockRoot, this.popupRoot, this.pipRoot, this.remoteRoot].forEach((root) => {
+            if (!root) return
+            const rowEl = root.querySelector(sel)
+            if (!rowEl) return
+            rowEl.classList.add('vj-midiflash')
+            clearTimeout(rowEl._vjFlashTimer)
+            rowEl._vjFlashTimer = setTimeout(() => rowEl.classList.remove('vj-midiflash'), 700)
+            // 'nearest' is a no-op when the row is already visible
+            try { rowEl.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }) } catch (e) { /* older webview */ }
+        })
+    }
+
     renderAll() {
         // an open menu must survive background rebuilds — once a MIDI mapping
         // is streaming, quiet commits rebuild the deck every ~600ms and would

@@ -977,6 +977,13 @@
 .vj-menu-item.vj-info { opacity: 0.55; font-style: italic; cursor: default; }
 .vj-menu-item.vj-info:hover { background: none; }
 
+/* pulse on the row a hardware midi control is currently driving */
+.vj-midiflash {
+  box-shadow: inset 0 0 0 1px var(--vj-armed);
+  border-radius: 2px;
+  transition: box-shadow 0.15s;
+}
+
 /* "use as default for new learns" row in the midi range editor */
 .vj-midi-default {
   display: flex;
