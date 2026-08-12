@@ -7,18 +7,23 @@ function initialShowCode() {
     const p = new URLSearchParams(window.location.search)
     const param = p.get('showCode') || p.get('show-code')
     if (param !== null) return param !== 'false'
-    return localStorage.getItem('hydra-show-code') === '1'
+    // remembered toggle (deck CODE button / ui: toggle code) wins…
+    const stored = localStorage.getItem('hydra-show-code')
+    if (stored !== null) return stored === '1'
+    // …otherwise a normal browser boots editor-first; only display kiosks
+    // (?display=1 — the TV app / projector) default to bare visuals
+    return true
   } catch (e) {
-    return false
+    return true
   }
 }
 
 export default function store(state, emitter) {
   state.showInfo = false
   state.showUI = true
-  // code overlay: OFF by default (VJ-first) — the deck's CODE button turns it
-  // on and the choice persists; a showCode URL param overrides both.
-  // TV/projector kiosks always boot to bare visuals.
+  // code overlay: ON by default in a normal browser (editor + header usable
+  // out of the box); the CODE toggle persists per-browser and a showCode URL
+  // param overrides both. TV/projector kiosks (?display=1) always boot bare.
   state.showCode = !isDisplay() && initialShowCode()
   state.showExtensions = false
   state.errorMessage = ''
