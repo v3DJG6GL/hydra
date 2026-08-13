@@ -232,6 +232,54 @@ export default class MidiControl {
         this.persist()
     }
 
+    // who holds this hardware control right now (for the reassign prompt)?
+    // Returns a short human description, or null when it's free — or held
+    // by the very target being learned (silent re-learn).
+    _controlOwner(ctl, ch, l) {
+        for (const [path, m] of Object.entries(this.mappings.params)) {
+            if (m.ch !== ch) continue
+            if ((ctl.cc !== undefined && m.cc === ctl.cc) ||
+                (ctl.note !== undefined && m.note === ctl.note)) {
+                if (l.path === path) return null
+                return this._pathDesc(path)
+            }
+        }
+        if (ctl.note !== undefined) {
+            const key = `n${ctl.note}c${ch}`
+            const slot = this.mappings.scenes[key]
+            if (slot !== undefined) return l.scene === slot ? null : 'scene ' + (slot + 1)
+            const action = this.mappings.actions[key]
+            if (action) return l.action === action ? null : action.toUpperCase()
+        }
+        return null
+    }
+
+    _pathDesc(path) {
+        const m = /\(([^)]*)\)\.(a\d+|scale|offset|l\d+|v\d+)$/.exec(path)
+        if (m) return `${m[1]} ${m[2]}`
+        const s = /^s\d+\.(\w+)$/.exec(path)
+        return s ? s[1] : path
+    }
+
+    // finish a learn, asking first when the control already drives something
+    // else — a controller full of assignments shouldn't lose one to a slip
+    _finishLearn(l, ctl, ch, finish) {
+        this.learning = null
+        const owner = this._controlOwner(ctl, ch, l)
+        if (owner && this.c.confirmReassign) {
+            const info = controlInfo(ctl.cc !== undefined ? { cc: ctl.cc, ch } : { note: ctl.note, ch })
+            this.c.confirmReassign(info ? info.label : '?', owner, () => {
+                finish()
+                this.persist()
+                this.c.renderAll()
+            })
+            return
+        }
+        finish()
+        this.persist()
+        this.c.renderAll()
+    }
+
     // one hardware control drives one thing: a fresh learn steals the knob or
     // pad from whatever held it before — params, scene pads and actions alike
     _releaseControl(ctl, ch) {
@@ -258,21 +306,20 @@ export default class MidiControl {
             const key = `n${d1}c${ch}`
             if (this.learning) {
                 const l = this.learning
-                this._releaseControl({ note: d1 }, ch)
-                if (l.scene != null) this.mappings.scenes[key] = l.scene
-                else if (l.action) this.mappings.actions[key] = l.action
-                else if (l.path != null) {
-                    // pads carry no range: they mute/unmute the param. `on` is
-                    // the fallback level for a param that is 0 at first press
-                    const model = this.c.ctx().getModel()
-                    const arg = model && model.pathIndex.get(l.path)
-                    const v0 = arg ? arg.value : (isFinite(l.hint) ? l.hint : 0)
-                    const mode = l.mode === 'auto' ? 'toggle' : l.mode
-                    this.mappings.params[l.path] = { note: d1, ch, mode, on: v0 || 1 }
-                }
-                this.learning = null
-                this.persist()
-                this.c.renderAll()
+                this._finishLearn(l, { note: d1 }, ch, () => {
+                    this._releaseControl({ note: d1 }, ch)
+                    if (l.scene != null) this.mappings.scenes[key] = l.scene
+                    else if (l.action) this.mappings.actions[key] = l.action
+                    else if (l.path != null) {
+                        // pads carry no range: they mute/unmute the param.
+                        // `on` is the fallback level for a param learned at 0
+                        const model = this.c.ctx().getModel()
+                        const arg = model && model.pathIndex.get(l.path)
+                        const v0 = arg ? arg.value : (isFinite(l.hint) ? l.hint : 0)
+                        const mode = l.mode === 'auto' ? 'toggle' : l.mode
+                        this.mappings.params[l.path] = { note: d1, ch, mode, on: v0 || 1 }
+                    }
+                })
                 return
             }
             const slot = this.mappings.scenes[key]
@@ -286,21 +333,22 @@ export default class MidiControl {
         }
         if (kind === 0x80 || (kind === 0x90 && d2 === 0)) { // note off
             for (const [path, m] of Object.entries(this.mappings.params)) {
-                // hold buttons release back to silence
-                if (m.note === d1 && m.ch === ch && m.mode === 'push') this.applyValue(path, m, 0)
+                // hold buttons mute while held: release brings the value back
+                if (m.note === d1 && m.ch === ch && m.mode === 'push') {
+                    this.applyValue(path, m, this._onLevel(m))
+                }
             }
             return
         }
         if (kind !== 0xb0) return // control change from here on
         if (this.learning && this.learning.path != null &&
             (this.learning.mode === 'auto' || this.learning.mode === 'cc')) {
-            const { path } = this.learning
-            this.learning = null
-            this._releaseControl({ cc: d1 }, ch)
-            // no range — the knob drives the value relatively, like the fader
-            this.mappings.params[path] = { cc: d1, ch }
-            this.persist()
-            this.c.renderAll()
+            const l = this.learning
+            this._finishLearn(l, { cc: d1 }, ch, () => {
+                this._releaseControl({ cc: d1 }, ch)
+                // no range — the knob drives the value relatively, like the fader
+                this.mappings.params[l.path] = { cc: d1, ch }
+            })
         }
         for (const [path, m] of Object.entries(this.mappings.params)) {
             if (m.cc === d1 && m.ch === ch) this.applyCC(path, m, d2)
@@ -338,11 +386,12 @@ export default class MidiControl {
         if (action === 'hush') this.c.host.run('hush()')
     }
 
-    // pads mute/unmute — no range involved. Toggle: a non-zero param
-    // remembers its level and snaps to 0; a zero param comes back to the
-    // remembered level (or the level it had at learn time). Hold: the on
-    // level while pressed, 0 on release. A knob moving the same param
-    // updates what "on" means — whatever value the pad silenced, it restores.
+    // pads mute — no range involved, and pressing always goes TOWARD 0.
+    // Toggle: one hit snaps the param to 0 (remembering its level), the
+    // next brings the remembered level back. Hold: 0 while the pad is
+    // pressed, the previous level returns on release. A knob moving the
+    // same param updates what comes back — whatever value the pad
+    // silenced, it restores.
     _onLevel(m) {
         // m.max covers pad mappings persisted by older builds (ranged pads)
         const v = m.prev !== undefined ? m.prev : (m.on !== undefined ? m.on : m.max)
@@ -361,7 +410,7 @@ export default class MidiControl {
             m.prev = cur
             this.persist()
         }
-        if (m.mode === 'push') return this.applyValue(path, m, this._onLevel(m))
+        if (m.mode === 'push') return this.applyValue(path, m, 0)
         this.applyValue(path, m, cur ? 0 : this._onLevel(m))
     }
 

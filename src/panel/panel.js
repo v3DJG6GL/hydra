@@ -1042,6 +1042,43 @@ export default class VJPanel {
         }
     }
 
+    // a learn landed on a hardware control that already drives something
+    // else: don't steal it silently — ask. Held as state (not a one-off DOM
+    // node) so the background rebuilds that MIDI traffic triggers can't
+    // wipe the question mid-decision; renderInto re-attaches it.
+    confirmReassign(ctlLabel, ownerDesc, onYes) {
+        this._confirm = { ctlLabel, ownerDesc, onYes }
+        this.renderAll()
+    }
+
+    _renderConfirm(d) {
+        const c = this._confirm
+        const wrap = el(d, 'div', 'vj-confirm')
+        const box = el(d, 'div', 'vj-confirm-box')
+        box.appendChild(el(d, 'div', 'vj-confirm-msg',
+            `${c.ctlLabel} ${this.tr('panel.reassign-msg', 'already controls')} ${c.ownerDesc}`))
+        const btns = el(d, 'div', 'vj-confirm-btns')
+        const yes = el(d, 'button', 'vj-menu-item', this.tr('panel.reassign-yes', 'reassign'))
+        yes.onclick = () => {
+            this._confirm = null
+            c.onYes() // persists + re-renders
+        }
+        const no = el(d, 'button', 'vj-menu-item vj-danger', this.tr('panel.reassign-no', 'keep it'))
+        const cancel = () => {
+            this._confirm = null
+            this.renderAll()
+        }
+        no.onclick = cancel
+        wrap.onclick = (e) => {
+            if (e.target === wrap) cancel()
+        }
+        btns.appendChild(yes)
+        btns.appendChild(no)
+        box.appendChild(btns)
+        wrap.appendChild(box)
+        return wrap
+    }
+
     setAssignMode(on) {
         this.midiAssign = !!on
         if (!on && this.midi.learning) this.midi.cancelLearn()
@@ -1137,6 +1174,7 @@ export default class VJPanel {
                 keepEdit._ta.scrollTop = editSel.top
             }
         }
+        if (this._confirm) root.appendChild(this._renderConfirm(d))
     }
 
     renderToprail(d, root) {
@@ -2111,8 +2149,8 @@ export default class VJPanel {
             items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
         } else {
             items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob / hit a pad)'), fn: () => this.midi.startLearn(arg.path) })
-            items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: toggle (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'toggle') })
-            items.push({ label: this.tr('panel.midi-learn-push', 'midi button: hold (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'push') })
+            items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: mute / unmute (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'toggle') })
+            items.push({ label: this.tr('panel.midi-learn-push', 'midi button: mute while held (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'push') })
         }
         if (this.midi.isMapped(arg.path)) {
             const m = this.midi.mappings.params[arg.path]
@@ -2166,8 +2204,8 @@ export default class VJPanel {
                 this.midi.startLearn(path, mode, def)
             }
             items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob / hit a pad)'), fn: () => learn() })
-            items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: toggle (hit a pad)'), fn: () => learn('toggle') })
-            items.push({ label: this.tr('panel.midi-learn-push', 'midi button: hold (hit a pad)'), fn: () => learn('push') })
+            items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: mute / unmute (hit a pad)'), fn: () => learn('toggle') })
+            items.push({ label: this.tr('panel.midi-learn-push', 'midi button: mute while held (hit a pad)'), fn: () => learn('push') })
         }
         this.openItemsMenu(d, root, anchor, items)
     }

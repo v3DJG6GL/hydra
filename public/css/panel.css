@@ -418,6 +418,42 @@
 
 .vj-hush.vj-midimapped { box-shadow: inset 0 -2px 0 var(--vj-mc, var(--vj-o1)); }
 
+/* reassign question: a control already drives something else */
+.vj-confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 11, 13, 0.6);
+}
+
+.vj-confirm-box {
+  background: var(--vj-panel, #101216);
+  border: 1px solid var(--vj-line);
+  border-radius: 4px;
+  padding: 14px 16px;
+  max-width: 320px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+}
+
+.vj-confirm-msg {
+  font-size: 11px;
+  color: var(--vj-silkscreen);
+  margin-bottom: 10px;
+}
+
+.vj-confirm-btns {
+  display: flex;
+  gap: 8px;
+}
+
+.vj-confirm-btns .vj-menu-item {
+  flex: 1;
+  text-align: center;
+}
+
 /* ⚡ MAP assign mode: every tappable mapping target reads as such */
 .vj-assign [data-path],
 .vj-assign .vj-scene,

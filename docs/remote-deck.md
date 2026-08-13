@@ -254,16 +254,22 @@ Right-click (long-press on touch) still opens the full menu per row:
   *midi range…* in the same menu takes any min/max — including negatives
   and values far beyond the on-screen fader — and *clear range* goes back
   to unlimited.
-- **Buttons** — *midi button: toggle* mutes/unmutes the param (0 on one
-  hit, the remembered level on the next), *midi button: hold* keeps it on
-  while the pad is held and drops it to 0 on release (release works with
-  real note-offs and with vel-0 note-ons, both conventions).
+- **Buttons mute** — pressing always goes toward 0. *midi button:
+  mute / unmute* snaps the param to 0 on one hit and brings the previous
+  level back on the next; *midi button: mute while held* holds it at 0
+  and restores the previous level on release (release works with real
+  note-offs and with vel-0 note-ons, both conventions). Whatever a knob
+  or fader set in the meantime is what comes back.
 - **Numbers inside expressions too** — the scale/offset rows of an audio
   or mouse binding and the mini-faders on any `() => …` formula (or a
   constant like `Math.PI/4`) learn the same way; the hardware drives them
   live without recompiling.
 - **Scene pads** — *midi learn* on a scene slot recalls it on a pad hit.
 - **HUSH** — right-click it and hit a pad: panic button on hardware.
+
+A learn that lands on a knob or pad which already drives something else
+asks before stealing it ("CC7 already controls noise scale — reassign /
+keep it"), so a slip of the hand can't silently unmap a control.
 
 Mappings persist per browser and deactivate automatically when the sketch
 structure changes underneath them (they're keyed to the function the
