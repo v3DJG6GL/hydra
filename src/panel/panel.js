@@ -1046,24 +1046,27 @@ export default class VJPanel {
     // else: don't steal it silently — ask. Held as state (not a one-off DOM
     // node) so the background rebuilds that MIDI traffic triggers can't
     // wipe the question mid-decision; renderInto re-attaches it.
-    confirmReassign(ctlLabel, ownerDesc, onYes) {
-        this._confirm = { ctlLabel, ownerDesc, onYes }
+    confirmReassign(ctl, ownerDesc, onYes) {
+        this._confirm = { ctl, ownerDesc, onYes }
         this.renderAll()
     }
 
     _renderConfirm(d) {
         const c = this._confirm
         const wrap = el(d, 'div', 'vj-confirm')
-        const box = el(d, 'div', 'vj-confirm-box')
-        box.appendChild(el(d, 'div', 'vj-confirm-msg',
-            `${c.ctlLabel} ${this.tr('panel.reassign-msg', 'already controls')} ${c.ownerDesc}`))
+        const box = el(d, 'div', 'vj-confirm-box vj-mc' + (c.ctl.color || 0))
+        const msg = el(d, 'div', 'vj-confirm-msg')
+        msg.appendChild(el(d, 'span', 'vj-confirm-ctl', c.ctl.label))
+        msg.appendChild(d.createTextNode(' ' + this.tr('panel.reassign-msg', 'already controls') + ' '))
+        msg.appendChild(el(d, 'span', 'vj-confirm-owner', c.ownerDesc))
+        box.appendChild(msg)
         const btns = el(d, 'div', 'vj-confirm-btns')
-        const yes = el(d, 'button', 'vj-menu-item', this.tr('panel.reassign-yes', 'reassign'))
+        const yes = el(d, 'button', 'vj-confirm-btn vj-confirm-yes', this.tr('panel.reassign-yes', 'reassign'))
         yes.onclick = () => {
             this._confirm = null
             c.onYes() // persists + re-renders
         }
-        const no = el(d, 'button', 'vj-menu-item vj-danger', this.tr('panel.reassign-no', 'keep it'))
+        const no = el(d, 'button', 'vj-confirm-btn', this.tr('panel.reassign-no', 'keep it'))
         const cancel = () => {
             this._confirm = null
             this.renderAll()
@@ -1072,10 +1075,23 @@ export default class VJPanel {
         wrap.onclick = (e) => {
             if (e.target === wrap) cancel()
         }
+        // ←/→ hop between the buttons, Enter fires the focused one
+        // (native), Esc keeps the existing mapping
+        box.onkeydown = (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                e.preventDefault()
+                ;(d.activeElement === yes ? no : yes).focus()
+            }
+            if (e.key === 'Escape') {
+                e.stopPropagation()
+                cancel()
+            }
+        }
         btns.appendChild(yes)
         btns.appendChild(no)
         box.appendChild(btns)
         wrap.appendChild(box)
+        setTimeout(() => { try { yes.focus() } catch (e) { /* detached */ } }, 0)
         return wrap
     }
 
@@ -2169,7 +2185,7 @@ export default class VJPanel {
         if (this.midi.isMapped(arg.path)) {
             const m = this.midi.mappings.params[arg.path]
             const ctl = this.midi.paramControl(arg.path)
-            if (m.cc !== undefined) {
+            if (m.cc !== undefined && !m.mode) {
                 // unlimited by default (the knob moves the value like the
                 // fader); this is where to pin an absolute range instead
                 const span = isFinite(m.min) && isFinite(m.max)
@@ -2270,7 +2286,7 @@ export default class VJPanel {
     // travel onto that span instead; clearing goes back to unlimited.
     openMidiRange(d, root, anchor, arg) {
         const m = this.midi.mappings.params[arg.path]
-        if (!m || m.cc === undefined) return
+        if (!m || m.cc === undefined || m.mode) return
         const hasRange = isFinite(m.min) && isFinite(m.max)
         this.openPopover(d, root, anchor, (pop) => {
             pop.classList.add('vj-rangeform')

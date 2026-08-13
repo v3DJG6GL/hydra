@@ -259,7 +259,10 @@ Right-click (long-press on touch) still opens the full menu per row:
   level back on the next; *midi button: mute while held* holds it at 0
   and restores the previous level on release (release works with real
   note-offs and with vel-0 note-ons, both conventions). Whatever a knob
-  or fader set in the meantime is what comes back.
+  or fader set in the meantime is what comes back. Buttons that send
+  **CC** instead of notes (many keyboards' pads and transport buttons)
+  learn through the same two menu items — press the button while the
+  learn is armed.
 - **Numbers inside expressions too** — the scale/offset rows of an audio
   or mouse binding and the mini-faders on any `() => …` formula (or a
   constant like `Math.PI/4`) learn the same way; the hardware drives them

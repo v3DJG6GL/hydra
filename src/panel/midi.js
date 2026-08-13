@@ -142,7 +142,10 @@ export default class MidiControl {
             for (const ch of chans) {
                 for (let n = 0; n < 128; n++) {
                     send([0x80 | ch, n, 0])
-                    send([0xb0 | ch, n, 0])
+                    // CC 120-127 are channel-mode messages (all notes off,
+                    // omni/mono/poly) — "clearing" them RESETS some devices,
+                    // which snaps their LEDs back to the all-bright default
+                    if (n < 120) send([0xb0 | ch, n, 0])
                 }
             }
             this._lit = new Set()
@@ -193,10 +196,28 @@ export default class MidiControl {
         this.error = null
         const attach = () => {
             this.access.inputs.forEach((input) => { input.onmidimessage = (e) => this.onMessage(e.data) })
-            this.syncLeds(true) // re-light assigned controls on (re)connect
         }
         attach()
-        this.access.onstatechange = attach
+        this.access.onstatechange = () => {
+            attach()
+            // full LED re-sync only when the set of INPUT devices actually
+            // changed (a controller was plugged in / came back). Output
+            // ports also fire statechange — merely opening one on our first
+            // LED send would loop into another full sweep.
+            const sig = []
+            this.access.inputs.forEach((i) => sig.push(i.id))
+            const s = sig.sort().join(',')
+            if (s !== this._inputSig) {
+                this._inputSig = s
+                this.syncLeds(true)
+            }
+        }
+        this._inputSig = (() => {
+            const sig = []
+            this.access.inputs.forEach((i) => sig.push(i.id))
+            return sig.sort().join(',')
+        })()
+        this.syncLeds(true)
         return true
     }
 
@@ -364,11 +385,23 @@ export default class MidiControl {
         return null
     }
 
+    // 's0.t1(modulateScale).a0.t0(rotate).a0.l0' -> 'rotate · arg 1 · ƒ1'
     _pathDesc(path) {
-        const m = /\(([^)]*)\)\.(a\d+|scale|offset|l\d+|v\d+)$/.exec(path)
-        if (m) return `${m[1]} ${m[2]}`
-        const s = /^s\d+\.(\w+)$/.exec(path)
-        return s ? s[1] : path
+        const paren = path.lastIndexOf(')')
+        if (paren === -1) {
+            const s = /^s\d+\.(\w+)$/.exec(path)
+            return s ? s[1] : path
+        }
+        const fn = /\(([^)]*)\)$/.exec(path.slice(0, paren + 1).replace(/^.*\(/, '('))
+        const name = fn ? fn[1] : ''
+        const parts = path.slice(paren + 1).split('.').filter(Boolean).map((p) => {
+            let m
+            if ((m = /^a(\d+)$/.exec(p))) return 'arg ' + (+m[1] + 1)
+            if ((m = /^l(\d+)$/.exec(p))) return 'ƒ' + (+m[1] + 1)
+            if ((m = /^v(\d+)$/.exec(p))) return 'step ' + (+m[1] + 1)
+            return p
+        })
+        return [name, ...parts].filter(Boolean).join(' · ')
     }
 
     // finish a learn, asking first when the control already drives something
@@ -377,8 +410,8 @@ export default class MidiControl {
         this.learning = null
         const owner = this._controlOwner(ctl, ch, l)
         if (owner && this.c.confirmReassign) {
-            const info = controlInfo(ctl.cc !== undefined ? { cc: ctl.cc, ch } : { note: ctl.note, ch })
-            this.c.confirmReassign(info ? info.label : '?', owner, () => {
+            const info = controlInfo(ctl.cc !== undefined ? { cc: ctl.cc, ch } : { note: ctl.note, ch }) || { label: '?', color: 0 }
+            this.c.confirmReassign(info, owner, () => {
                 finish()
                 this.persist()
                 this.c.renderAll()
@@ -451,17 +484,37 @@ export default class MidiControl {
             return
         }
         if (kind !== 0xb0) return // control change from here on
-        if (this.learning && this.learning.path != null &&
-            (this.learning.mode === 'auto' || this.learning.mode === 'cc')) {
+        if (this.learning && this.learning.path != null) {
             const l = this.learning
-            this._finishLearn(l, { cc: d1 }, ch, () => {
-                this._releaseControl({ cc: d1 }, ch)
-                // no range — the knob drives the value relatively, like the fader
-                this.mappings.params[l.path] = { cc: d1, ch }
-            })
+            if (l.mode === 'auto' || l.mode === 'cc') {
+                this._finishLearn(l, { cc: d1 }, ch, () => {
+                    this._releaseControl({ cc: d1 }, ch)
+                    // no range — the knob drives the value relatively, like the fader
+                    this.mappings.params[l.path] = { cc: d1, ch }
+                })
+            } else if (d2 > 0) {
+                // an explicit button learn (mute/unmute, mute-while-held)
+                // also accepts a CC press — many keyboards' buttons send CC
+                // (value 127 down / 0 up), not notes
+                const model = this.c.ctx().getModel()
+                const arg = model && model.pathIndex.get(l.path)
+                const v0 = arg ? arg.value : (isFinite(l.hint) ? l.hint : 0)
+                this._finishLearn(l, { cc: d1 }, ch, () => {
+                    this._releaseControl({ cc: d1 }, ch)
+                    this.mappings.params[l.path] = { cc: d1, ch, mode: l.mode, on: v0 || 1 }
+                })
+            }
+            return
         }
         for (const [path, m] of Object.entries(this.mappings.params)) {
-            if (m.cc === d1 && m.ch === ch) this.applyCC(path, m, d2)
+            if (m.cc !== d1 || m.ch !== ch) continue
+            if (m.mode === 'toggle' || m.mode === 'push') {
+                // a CC button: value > 0 is the press, 0 the release
+                if (d2 > 0) this.pressButton(path, m)
+                else if (m.mode === 'push') this.applyValue(path, m, this._onLevel(m))
+            } else {
+                this.applyCC(path, m, d2)
+            }
         }
     }
 

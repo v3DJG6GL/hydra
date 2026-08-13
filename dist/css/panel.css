@@ -418,7 +418,8 @@
 
 .vj-hush.vj-midimapped { box-shadow: inset 0 -2px 0 var(--vj-mc, var(--vj-o1)); }
 
-/* reassign question: a control already drives something else */
+/* reassign question: a control already drives something else. The box
+   wears the control's own palette color (vj-mcN sets --vj-mc). */
 .vj-confirm {
   position: absolute;
   inset: 0;
@@ -426,22 +427,40 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(10, 11, 13, 0.6);
+  background: rgba(10, 11, 13, 0.65);
+  backdrop-filter: blur(1px);
 }
 
 .vj-confirm-box {
-  background: var(--vj-panel, #101216);
+  background: var(--vj-module, #14161a);
   border: 1px solid var(--vj-line);
-  border-radius: 4px;
-  padding: 14px 16px;
-  max-width: 320px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  border-top: 2px solid var(--vj-mc, var(--vj-armed));
+  border-radius: 3px;
+  padding: 14px 16px 12px;
+  min-width: 240px;
+  max-width: 340px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.6);
 }
 
 .vj-confirm-msg {
   font-size: 11px;
+  line-height: 1.7;
+  color: var(--vj-dim);
+  margin-bottom: 12px;
+}
+
+.vj-confirm-ctl {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--vj-mc, var(--vj-line));
+  border-radius: 2px;
+  color: var(--vj-mc, var(--vj-silkscreen));
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.vj-confirm-owner {
   color: var(--vj-silkscreen);
-  margin-bottom: 10px;
 }
 
 .vj-confirm-btns {
@@ -449,9 +468,30 @@
   gap: 8px;
 }
 
-.vj-confirm-btns .vj-menu-item {
+.vj-confirm-btn {
   flex: 1;
-  text-align: center;
+  padding: 7px 10px;
+  background: var(--vj-chassis, #0a0b0d);
+  border: 1px solid var(--vj-line);
+  border-radius: 2px;
+  color: var(--vj-silkscreen);
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.vj-confirm-yes {
+  border-color: var(--vj-mc, var(--vj-armed));
+  color: var(--vj-mc, var(--vj-armed));
+}
+
+.vj-confirm-btn:hover,
+.vj-confirm-btn:focus-visible {
+  background: var(--vj-line);
+  outline: 2px solid var(--vj-mc, var(--vj-armed));
+  outline-offset: 1px;
 }
 
 /* ⚡ MAP assign mode: every tappable mapping target reads as such */
