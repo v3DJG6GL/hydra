@@ -522,6 +522,44 @@
   .vj-assignbtn.vj-on { animation: none; }
 }
 
+/* per-row ⚡: one-tap midi learn on every value row. Ghost-quiet until
+   hovered so the dense strips stay readable; always present for touch. */
+.vj-rowmap {
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--vj-dim);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 3px;
+  cursor: pointer;
+  opacity: 0.3;
+  border-radius: 2px;
+}
+
+[data-path]:hover > .vj-rowmap,
+.vj-rowmap:focus-visible {
+  opacity: 1;
+  color: var(--vj-armed);
+}
+
+.vj-rowmap.vj-on {
+  opacity: 1;
+  color: var(--vj-armed);
+  animation: vj-assign-pulse 0.9s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vj-rowmap.vj-on { animation: none; }
+}
+
+/* keyboard focus in assign mode: ↑↓ rows, ←→ strips, enter arms */
+.vj-kfocus {
+  outline: 2px solid var(--vj-armed) !important;
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
 .vj-fader.vj-learning {
   border-color: var(--vj-armed);
   animation: vj-pulse 0.9s ease-in-out infinite;

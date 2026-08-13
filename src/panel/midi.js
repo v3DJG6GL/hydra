@@ -97,6 +97,20 @@ export default class MidiControl {
         return true
     }
 
+    // DAW/handshake ports must NEVER receive LED echoes: they speak DAW
+    // protocols, and stray notes/CCs there read as a DAW connecting (the
+    // Launch Control XL 3 answered ours with its HUI mode-select screen).
+    // 'MIDIIN2/MIDIOUT2' covers Windows' naming of second ports.
+    _isDawPort(name) {
+        return /\bDAW\b|MIDIIN2|MIDIOUT2/i.test(name || '')
+    }
+
+    // Launch Control XL 3: custom-mode LEDs are internally driven, echoes on
+    // its MIDI port don't stick — it gets its own driver over the DAW port
+    _isXl3(name) {
+        return /LCXL3|launch\s*control\s*xl\s*3/i.test(name || '')
+    }
+
     // the controller's own output port usually carries the same name as its
     // input — prefer those, so we don't blast a second, output-only device
     _ledOuts() {
@@ -106,6 +120,7 @@ export default class MidiControl {
         const inNames = new Set()
         this.access.inputs.forEach((i) => inNames.add(i.name))
         this.access.outputs.forEach((o) => {
+            if (this._isDawPort(o.name) || this._isXl3(o.name)) return
             all.push(o)
             if (inNames.has(o.name)) outs.push(o)
         })
@@ -169,6 +184,10 @@ export default class MidiControl {
             }
         }
         this._lit = lit
+        // the Launch Control XL 3 rides its own driver — start it on the
+        // first full sync, diff it along afterwards
+        if (this._xl3State().on) this._xl3Sync(full)
+        else if (full && this._xl3DawOuts().length) this._xl3Setup()
     }
 
     _ledOff() {
@@ -180,6 +199,122 @@ export default class MidiControl {
             if (msg) outs.forEach((o) => { try { o.send(msg) } catch (e) { /* port closed */ } })
         }
         this._lit = new Set()
+        this._xl3Exit()
+    }
+
+    // ---- Launch Control XL 3 LED driver (over its DAW port) --------------
+    // In standalone custom modes the XL3 drives its own LEDs and ignores
+    // echoes on the MIDI port. The documented road (programmer's reference):
+    // enter DAW mode on the DAW port (9F 0C 7F) — which kicks the surface to
+    // DAW Mixer, so the user's custom mode is immediately re-selected via
+    // surface-mode select (B6 1E, custom modes 1-4 = 6-9, 5-16 = 18-29) —
+    // then colour any physical control with B0 <index> <palette colour>
+    // (encoders 13-36, faders 5-12, button rows 37-52). WHICH physical
+    // control carries a learned CC is discovered through touch events
+    // (B6 47 7F enables; touching sends BE <index> 7F on the DAW port):
+    // grabbing a mapped knob while its custom CC streams ties the two
+    // together (m.pi), persisted with the mapping. Exiting DAW mode
+    // (9F 0C 00) hands the LEDs back to the device.
+
+    _xl3DawOuts() {
+        const outs = []
+        if (!this.access || !this.access.outputs) return outs
+        this.access.outputs.forEach((o) => {
+            if (this._isXl3(o.name) && this._isDawPort(o.name)) outs.push(o)
+        })
+        return outs
+    }
+
+    _xl3State() {
+        if (!this._xl3) this._xl3 = { on: false, mode: 6, touch: null, lit: new Map() }
+        return this._xl3
+    }
+
+    // DAW-port traffic: surface-mode reports and touch events. Kept away
+    // from onMessage so DAW-mode ACKs (note-ons on ch 16) can't complete a
+    // pad learn or drive a mapping.
+    _onXl3Daw(data) {
+        const [status, d1, d2] = data
+        const x = this._xl3State()
+        // B6 1E <mode>: surface-mode report — remember the user's custom
+        // mode (6+); 1/2 are the DAW surfaces we never want to strand
+        if (status === 0xb6 && d1 === 0x1e && d2 >= 6) x.mode = d2
+        // BE <index> <127|0>: encoder/fader touch on channel 15
+        if (status === 0xbe && d2 > 0) x.touch = { idx: d1, t: Date.now() }
+    }
+
+    // a control message arrived for this mapping while a finger is (just)
+    // on a physical encoder/fader: that's the physical LED for it
+    _xl3Tag(m) {
+        const x = this._xl3
+        const t = x && x.touch
+        if (!m || !t || !x.on) return
+        if (Date.now() - t.t > 1500 || m.pi === t.idx) return
+        m.pi = t.idx
+        this.persist() // diff-syncs the LED into its deck colour
+    }
+
+    async _xl3Setup() {
+        const outs = this._xl3DawOuts()
+        if (!outs.length || this._xl3State().on) return
+        const send = (msg) => outs.forEach((o) => { try { o.send(msg) } catch (e) { /* closed */ } })
+        const pause = (ms) => new Promise((r) => setTimeout(r, ms))
+        this._xl3State().on = true
+        // hand the LEDs back if the deck goes away mid-session
+        if (typeof window !== 'undefined' && !this._xl3Bye) {
+            this._xl3Bye = true
+            window.addEventListener('pagehide', () => this._xl3Exit())
+        }
+        send([0x9f, 0x0c, 0x7f]) // enter DAW mode (surface jumps to DAW Mixer)
+        await pause(150)
+        send([0xb7, 0x1e, 0x00]) // query surface mode (reply updates x.mode)
+        await pause(150)
+        send([0xb6, 0x1e, this._xl3State().mode]) // put the custom mode back
+        send([0xb6, 0x47, 0x7f]) // touch events on
+        await pause(100)
+        this._xl3Sync(true)
+    }
+
+    _xl3Exit() {
+        const x = this._xl3
+        if (!x || !x.on) return
+        const outs = this._xl3DawOuts()
+        const send = (msg) => outs.forEach((o) => { try { o.send(msg) } catch (e) { /* closed */ } })
+        send([0xb6, 0x47, 0x00]) // touch events off
+        send([0x9f, 0x0c, 0x00]) // exit DAW mode — the device repaints itself
+        x.on = false
+        x.lit = new Map()
+    }
+
+    // deck palette (vj-mc-0..7) → nearest Novation palette indices
+    static get XL3_COLORS() { return [57, 33, 41, 9, 49, 37, 17, 60] }
+
+    _xl3Sync(full) {
+        const x = this._xl3
+        if (!x || !x.on) return
+        const outs = this._xl3DawOuts()
+        if (!outs.length) return
+        const send = (msg) => outs.forEach((o) => { try { o.send(msg) } catch (e) { /* closed */ } })
+        const want = new Map()
+        for (const [path, m] of Object.entries(this.mappings.params)) {
+            if (m.pi === undefined || !this._resolves(path)) continue
+            const info = controlInfo(m)
+            want.set(m.pi, MidiControl.XL3_COLORS[(info ? info.color : 0)] || 3)
+        }
+        if (full) {
+            // physical controls only (faders 5-12, encoders 13-36, button
+            // rows 37-52); side/transport buttons are left alone
+            for (let i = 5; i <= 52; i++) send([0xb0, i, 0])
+            x.lit = new Map()
+        }
+        for (const [pi, col] of x.lit) {
+            if (!want.has(pi)) send([0xb0, pi, 0])
+            else if (want.get(pi) !== col) send([0xb0, pi, want.get(pi)])
+        }
+        for (const [pi, col] of want) {
+            if (!x.lit.has(pi)) send([0xb0, pi, col])
+        }
+        x.lit = want
     }
 
     hasMappings() {
@@ -200,7 +335,17 @@ export default class MidiControl {
         }
         this.error = null
         const attach = () => {
-            this.access.inputs.forEach((input) => { input.onmidimessage = (e) => this.onMessage(e.data) })
+            this.access.inputs.forEach((input) => {
+                // DAW ports carry handshake/report traffic (mode ACKs are
+                // note-ons!) — never let it into the learn/drive path
+                if (this._isDawPort(input.name)) {
+                    input.onmidimessage = this._isXl3(input.name)
+                        ? (e) => this._onXl3Daw(e.data)
+                        : () => {}
+                    return
+                }
+                input.onmidimessage = (e) => this.onMessage(e.data)
+            })
         }
         attach()
         this.access.onstatechange = () => {
@@ -328,6 +473,21 @@ export default class MidiControl {
         this.c.renderAll()
     }
 
+    // "keep it" on the reassign question: stay armed for the same target,
+    // but ignore the declined control — its knob burst is still streaming
+    // and would re-open the very question that was just answered
+    rearm(l, ctl) {
+        this.learning = { ...l, skip: ctl }
+        this.c.renderAll()
+    }
+
+    _skipsLearn(l, ctl, ch) {
+        if (!l || !l.skip) return false
+        if ((l.skip.ch || 0) !== ch) return false
+        if (ctl.cc !== undefined) return l.skip.cc === ctl.cc
+        return l.skip.note === ctl.note
+    }
+
     unlearn(path) {
         delete this.mappings.params[path]
         this.persist()
@@ -433,12 +593,14 @@ export default class MidiControl {
             const info = controlInfo(ctl.cc !== undefined ? { cc: ctl.cc, ch } : { note: ctl.note, ch }) || { label: '?', color: 0 }
             this.c.confirmReassign(info, owner, () => {
                 finish()
+                if (l.path != null) this._xl3Tag(this.mappings.params[l.path])
                 this.persist()
                 this.c.renderAll()
-            })
+            }, { l, ctl: { ...ctl, ch } })
             return
         }
         finish()
+        if (l.path != null) this._xl3Tag(this.mappings.params[l.path])
         this.persist()
         this.c.renderAll()
     }
@@ -470,7 +632,7 @@ export default class MidiControl {
         const ch = status & 0x0f
         if (kind === 0x90 && d2 > 0) { // note on: pads and buttons
             const key = `n${d1}c${ch}`
-            if (this.learning) {
+            if (this.learning && !this._skipsLearn(this.learning, { note: d1 }, ch)) {
                 const l = this.learning
                 this._finishLearn(l, { note: d1 }, ch, () => {
                     this._releaseControl({ note: d1 }, ch)
@@ -507,7 +669,7 @@ export default class MidiControl {
             return
         }
         if (kind !== 0xb0) return // control change from here on
-        if (this.learning && this.learning.path != null) {
+        if (this.learning && this.learning.path != null && !this._skipsLearn(this.learning, { cc: d1 }, ch)) {
             const l = this.learning
             if (l.mode === 'auto' || l.mode === 'cc') {
                 this._finishLearn(l, { cc: d1 }, ch, () => {
@@ -531,6 +693,7 @@ export default class MidiControl {
         }
         for (const [path, m] of Object.entries(this.mappings.params)) {
             if (m.cc !== d1 || m.ch !== ch) continue
+            this._xl3Tag(m) // a finger on a physical control names its LED
             if (m.mode === 'toggle' || m.mode === 'push') {
                 // a CC button: value > 0 is the press, 0 the release
                 if (d2 > 0) this.pressButton(path, m)

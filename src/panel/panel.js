@@ -274,15 +274,17 @@ export default class VJPanel {
         // one's, and the controller should show exactly the live set. Diffed
         // against what's already lit, so this is a no-op on ordinary renders.
         this.midi.syncLeds()
-        // an open menu must survive background rebuilds — once a MIDI mapping
-        // is streaming, quiet commits rebuild the deck every ~600ms and would
-        // otherwise slam every popover shut (and long-press menus would never
-        // get a chance to open). Defer the rebuild until the popover closes;
-        // readouts stay fresh via flashParamValue in the meantime.
-        if (this._popover) {
+        // an open menu (or the reassign question) must survive background
+        // rebuilds — once a MIDI mapping is streaming, quiet commits rebuild
+        // the deck every ~600ms and would otherwise slam every popover shut
+        // (and swap the confirm's buttons out from under a click mid-press).
+        // Defer the rebuild until they close; readouts stay fresh via
+        // flashParamValue in the meantime.
+        if (this._popover || this._confirm) {
             this._renderQueued = true
             return
         }
+        this._renderQueued = false
         if (this.dockRoot && !this.state.panel.popup && !this.state.panel.pip) this.renderInto(this.dockRoot)
         if (this.popupRoot && this.popupWin && !this.popupWin.closed) this.renderInto(this.popupRoot)
         if (this.pipRoot && this.pipWin) this.renderInto(this.pipRoot)
@@ -1018,7 +1020,8 @@ export default class VJPanel {
             if (!this.midiAssign) return
             const t = e.target
             if (!t || !t.closest) return
-            if (t.closest('.vj-assignbtn') || t.closest('.vj-popover') || t.closest('.vj-codeedit')) return
+            if (t.closest('.vj-assignbtn') || t.closest('.vj-popover') || t.closest('.vj-codeedit') ||
+                t.closest('.vj-rowmap') || t.closest('.vj-confirm')) return
             const stop = () => { e.preventDefault(); e.stopPropagation() }
             const scene = t.closest('.vj-scene')
             if (scene && scene.dataset.slot !== undefined) {
@@ -1039,20 +1042,128 @@ export default class VJPanel {
             this.midi.startLearn(rowEl.dataset.path)
         }, true)
         const doc = root.ownerDocument
+        doc.__vjAssignRoot = root
         if (!doc.__vjAssignEsc) {
             doc.__vjAssignEsc = true
             doc.addEventListener('keydown', (e) => {
-                if (e.key === 'Escape' && this.midiAssign) this.setAssignMode(false)
+                if (e.key === 'Escape') {
+                    // an open reassign question eats the Esc: it closes and
+                    // re-arms — assign mode must survive underneath it
+                    if (this._confirm) {
+                        e.preventDefault()
+                        this._closeConfirm(true)
+                        return
+                    }
+                    if (this.midiAssign) this.setAssignMode(false)
+                    return
+                }
+                if (!this.midiAssign || this._confirm) return
+                const t = e.target
+                if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+                const r = doc.__vjAssignRoot
+                if (!r) return
+                if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                    e.preventDefault()
+                    this._assignMove(r, e.key)
+                } else if (e.key === 'Enter') {
+                    e.preventDefault()
+                    this._assignActivate(r)
+                }
             })
         }
+    }
+
+    // every mappable thing on the deck, in visual order: value rows (incl.
+    // expression literals and bind sub-rows), scene pads, HUSH
+    _assignTargets(root) {
+        const out = []
+        root.querySelectorAll('[data-path], .vj-scene[data-slot], .vj-hush').forEach((n) => {
+            if (n.dataset && n.dataset.path !== undefined) {
+                const a = this.model && this.model.pathIndex.get(n.dataset.path)
+                if (a && a.kind === 'number' && !a.noLive) out.push({ key: 'p:' + n.dataset.path, el: n })
+            } else if (n.classList.contains('vj-hush')) {
+                out.push({ key: 'h', el: n })
+            } else {
+                out.push({ key: 's:' + n.dataset.slot, el: n })
+            }
+        })
+        return out
+    }
+
+    // ↑/↓ walk rows, ←/→ hop between strips (the channel blocks) — plus the
+    // scene shelf and HUSH at the ends. Wraps around.
+    _assignMove(root, key) {
+        const targets = this._assignTargets(root)
+        if (!targets.length) return
+        const group = (t) => {
+            const g = t.el.closest('.vj-strip, .vj-scenes, .vj-toprail, .vj-setup')
+            return g || root
+        }
+        let i = targets.findIndex((t) => t.key === this._assignSel)
+        if (i === -1) {
+            i = 0
+        } else if (key === 'ArrowDown') {
+            i = (i + 1) % targets.length
+        } else if (key === 'ArrowUp') {
+            i = (i - 1 + targets.length) % targets.length
+        } else {
+            const dir = key === 'ArrowRight' ? 1 : -1
+            const g0 = group(targets[i])
+            let j = i
+            for (let step = 0; step < targets.length; step++) {
+                j = (j + dir + targets.length) % targets.length
+                if (group(targets[j]) !== g0) break
+            }
+            // land on the FIRST row of that group when moving right,
+            // so a hop always starts a strip from its top
+            const gj = group(targets[j])
+            while (dir === 1 && j > 0 && group(targets[j - 1]) === gj) j--
+            i = j
+        }
+        this._assignSel = targets[i].key
+        this._paintAssignSel(root)
+        try { targets[i].el.scrollIntoView({ block: 'nearest', inline: 'nearest' }) } catch (e) { /* old webview */ }
+    }
+
+    _paintAssignSel(root) {
+        root.querySelectorAll('.vj-kfocus').forEach((n) => n.classList.remove('vj-kfocus'))
+        if (!this.midiAssign || !this._assignSel) return
+        const hit = this._assignTargets(root).find((t) => t.key === this._assignSel)
+        if (hit) hit.el.classList.add('vj-kfocus')
+    }
+
+    // Enter on the focused row = the assign-mode tap: arm a learn for it
+    _assignActivate(root) {
+        const sel = this._assignSel
+        if (!sel) return
+        if (sel === 'h') this.midi.startLearnAction('hush')
+        else if (sel.startsWith('s:')) this.midi.startLearnScene(parseInt(sel.slice(2), 10))
+        else this.midi.startLearn(sel.slice(2))
     }
 
     // a learn landed on a hardware control that already drives something
     // else: don't steal it silently — ask. Held as state (not a one-off DOM
     // node) so the background rebuilds that MIDI traffic triggers can't
-    // wipe the question mid-decision; renderInto re-attaches it.
-    confirmReassign(ctl, ownerDesc, onYes) {
-        this._confirm = { ctl, ownerDesc, onYes }
+    // wipe the question mid-decision; renderInto re-attaches it. `learn`
+    // carries the interrupted learn so "keep it" can re-arm it.
+    confirmReassign(ctl, ownerDesc, onYes, learn) {
+        this._confirm = { ctl, ownerDesc, onYes, learn }
+        this.renderAll()
+    }
+
+    // declining keeps the old mapping AND keeps the learn armed (ignoring
+    // the declined control, whose burst is still streaming) — so a mapping
+    // pass just moves on to a free knob instead of falling out of the flow
+    _closeConfirm(declined) {
+        const c = this._confirm
+        this._confirm = null
+        if (declined && c && c.learn) {
+            this.midi.rearm(c.learn.l, c.learn.ctl)
+            if (this.host && this.host._fire) {
+                this.host._fire('toast', this.tr('panel.reassign-kept',
+                    'kept — still armed: touch a free control (esc cancels)'), 'info')
+            }
+        }
         this.renderAll()
     }
 
@@ -1072,13 +1183,9 @@ export default class VJPanel {
             c.onYes() // persists + re-renders
         }
         const no = el(d, 'button', 'vj-confirm-btn', this.tr('panel.reassign-no', 'keep it'))
-        const cancel = () => {
-            this._confirm = null
-            this.renderAll()
-        }
-        no.onclick = cancel
+        no.onclick = () => this._closeConfirm(true)
         wrap.onclick = (e) => {
-            if (e.target === wrap) cancel()
+            if (e.target === wrap) this._closeConfirm(true)
         }
         // ←/→ hop between the buttons, Enter fires the focused one
         // (native), Esc keeps the existing mapping
@@ -1089,7 +1196,7 @@ export default class VJPanel {
             }
             if (e.key === 'Escape') {
                 e.stopPropagation()
-                cancel()
+                this._closeConfirm(true)
             }
         }
         btns.appendChild(yes)
@@ -1195,7 +1302,33 @@ export default class VJPanel {
                 keepEdit._ta.scrollTop = editSel.top
             }
         }
+        this._decorateAssign(root, d)
         if (this._confirm) root.appendChild(this._renderConfirm(d))
+    }
+
+    // one-tap mapping on every value row: a small ⚡ at the row's end arms
+    // an auto learn for exactly that row — no menu trip, no assign mode.
+    // Runs as a pass over the finished DOM so every row builder (main
+    // faders, bind sub-rows, expression literals, setup rows) gets it.
+    _decorateAssign(root, d) {
+        if (this.midi && this.midi.available) {
+            root.querySelectorAll('[data-path]').forEach((row) => {
+                if (row.__vjMap) return
+                const path = row.dataset.path
+                const a = this.model && this.model.pathIndex.get(path)
+                if (!a || a.kind !== 'number' || a.noLive) return
+                row.__vjMap = true
+                const btn = el(d, 'button', 'vj-rowmap' + (this.midi.isLearning(path) ? ' vj-on' : ''), '⚡')
+                btn.title = this.tr('panel.rowmap', 'midi learn — tap, then move a knob / hit a pad')
+                btn.onclick = (e) => {
+                    e.stopPropagation()
+                    if (this.midi.isLearning(path)) this.midi.cancelLearn()
+                    else this.midi.startLearn(path)
+                }
+                row.appendChild(btn)
+            })
+        }
+        this._paintAssignSel(root)
     }
 
     renderToprail(d, root) {

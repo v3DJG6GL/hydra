@@ -242,6 +242,12 @@ itself.
 controller: tap ⚡ MAP in the toprail, then tap any value row (or a scene
 pad, or HUSH) and move a knob / hit a pad on the hardware. The mapping
 lands, the mode stays on — tap the next row. ⚡ MAP again (or Esc) exits.
+The keyboard works too: ↑/↓ walk the value rows, ←/→ hop between
+channel strips, Enter arms the focused row.
+
+**Per-row ⚡.** Every value row also carries its own small ⚡ at the end
+of the row (ghost-quiet until hovered): one tap arms the learn for
+exactly that row — no menu, no assign mode. Tap it again to cancel.
 
 Right-click (long-press on touch) still opens the full menu per row:
 
@@ -277,12 +283,27 @@ which lights exactly the mapped knobs and pads on controllers whose
 LEDs accept external MIDI — Korg nano* devices need their editor's LED
 mode set to *external* first. It re-lights automatically when the
 device reconnects, and it's off by default because a synth on the same
-MIDI bus would interpret those note-ons as actual notes.
+MIDI bus would interpret those note-ons as actual notes. DAW/handshake
+ports (a second port named "DAW", "MIDIIN2", …) are never addressed —
+LED echoes there read as a DAW connecting and can flip the device into
+a DAW protocol mode.
+
+**Novation Launch Control XL 3** gets a native LED driver instead of
+echoes: the deck speaks the documented DAW-port protocol (enters DAW
+mode, immediately re-selects your custom mode, and colours physical
+controls directly), so each mapped encoder or fader lights **in the
+same palette colour as its tag on the deck**. The deck learns which
+physical control carries a CC through the XL3's touch events — with
+LEDs enabled, simply grab each mapped knob/fader once and its LED takes
+its colour. Turning the option off (or closing the deck) exits DAW mode
+and hands the LEDs back to the device. The two 16-button rows send no
+touch events, so their LEDs stay device-driven.
 
 A learn that lands on a knob or pad which already drives something else
 *in the loaded sketch* asks before stealing it ("CC7 already controls
-noise scale — reassign / keep it"), so a slip of the hand can't silently
-unmap a control.
+noise scale — reassign / keep it"). Choosing *keep it* (or Esc) keeps
+the learn armed and ignores the declined control, so you can go
+straight for a free knob — and if ⚡ MAP mode was on, it stays on.
 
 Assignments are scene-scoped: the same knob can drive a different param
 in every scene. A mapping goes dormant when its sketch isn't loaded — it
