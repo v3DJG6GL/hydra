@@ -44,13 +44,13 @@ function loadMappings() {
     try {
         const m = JSON.parse(localStorage.getItem(KEY))
         if (m && typeof m === 'object') {
-            if (m.params || m.scenes || m.actions) {
-                return { params: m.params || {}, scenes: m.scenes || {}, actions: m.actions || {} }
+            if (m.params || m.scenes || m.actions || m.slots) {
+                return { params: m.params || {}, scenes: m.scenes || {}, actions: m.actions || {}, slots: m.slots || {} }
             }
-            return { params: m, scenes: {}, actions: {} } // pre-scene flat format
+            return { params: m, scenes: {}, actions: {}, slots: {} } // pre-scene flat format
         }
     } catch (e) { /* fresh */ }
-    return { params: {}, scenes: {}, actions: {} }
+    return { params: {}, scenes: {}, actions: {}, slots: {} }
 }
 
 export default class MidiControl {
@@ -271,8 +271,11 @@ export default class MidiControl {
         await pause(150)
         send([0xb6, 0x1e, this._xl3State().mode]) // put the custom mode back
         send([0xb6, 0x47, 0x7f]) // touch events on
-        await pause(100)
+        // the device repaints the custom mode's own LED state after the
+        // re-select — colours sent before that repaint get clobbered
+        await pause(1200)
         this._xl3Sync(true)
+        setTimeout(() => this._xl3Sync(true), 2500) // beat any late redraw
     }
 
     _xl3Exit() {
@@ -320,7 +323,39 @@ export default class MidiControl {
     hasMappings() {
         return Object.keys(this.mappings.params).length > 0 ||
             Object.keys(this.mappings.scenes).length > 0 ||
-            Object.keys(this.mappings.actions).length > 0
+            Object.keys(this.mappings.actions).length > 0 ||
+            Object.values(this.mappings.slots).some((s) => s && Object.keys(s).length > 0)
+    }
+
+    // ---- per-scene knob layouts --------------------------------------
+    // Param assignments belong to the SCENE they were made on: recalling a
+    // scene swaps the active mapping table for the layout parked on that
+    // slot (a never-mapped scene starts clean), and leaving a scene parks
+    // the current layout back on its slot. Scene pads and HUSH stay
+    // global. Slot-keyed like the pads: reordering scenes moves the code,
+    // not the knob layouts (documented drag&drop behavior).
+
+    sceneSwitch(from, to) {
+        if (from === to) return
+        if (Number.isInteger(from) && from >= 0) this.mappings.slots[from] = { ...this.mappings.params }
+        this.mappings.params = { ...(this.mappings.slots[to] || {}) }
+        // pending commits from the old scene must not splice into the new
+        // sketch (paths can match structurally across scenes)
+        for (const a of this.active.values()) clearTimeout(a.timer)
+        this.active.clear()
+        if (this.learning && this.learning.path != null) this.learning = null
+        this.persist()
+    }
+
+    sceneSaved(i) {
+        if (!Number.isInteger(i) || i < 0) return
+        this.mappings.slots[i] = { ...this.mappings.params }
+        this.persist()
+    }
+
+    sceneCleared(i) {
+        delete this.mappings.slots[i]
+        this.persist()
     }
 
     async enable() {

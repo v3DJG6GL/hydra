@@ -305,13 +305,17 @@ noise scale — reassign / keep it"). Choosing *keep it* (or Esc) keeps
 the learn armed and ignores the declined control, so you can go
 straight for a free knob — and if ⚡ MAP mode was on, it stays on.
 
-Assignments are scene-scoped: the same knob can drive a different param
-in every scene. A mapping goes dormant when its sketch isn't loaded — it
-doesn't trigger the reassign question, can't be stolen by a learn in
-another scene, and its LED stays dark — and wakes up again the moment
-its scene comes back. Mappings persist per browser, keyed to the
-function the param belongs to, so they also deactivate when the sketch
-structure changes underneath them.
+**Assignments are per scene.** Each scene slot keeps its own knob
+layout: recalling a scene swaps in the assignments made on it (a scene
+you never mapped starts clean), leaving a scene parks its layout, and
+saving/overwriting a scene attaches the current layout to it. The same
+knob can therefore drive a different param on every scene — and switch
+back with the scene. Scene-recall pads and HUSH stay global. Like the
+pads, layouts are keyed to slot *positions*: reordering scenes moves
+the code, not the knob layouts. Mappings persist per browser, keyed to
+the function the param belongs to, so a mapping also deactivates (stays
+parked, drives nothing) when the sketch structure changes underneath
+it, and revives when the structure returns.
 
 ## Live preview
 

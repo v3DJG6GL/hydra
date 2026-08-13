@@ -775,11 +775,13 @@ export default class VJPanel {
 
     saveScene(i) {
         this.cycle.pos = i // the saved slot IS what's on screen now
+        this.midi.sceneSaved(i) // the current knob layout belongs to it too
         this.host.sceneSave(i)
     }
 
     addScene() {
         this.cycle.pos = this.scenes.length // appended slot becomes active
+        this.midi.sceneSaved(this.cycle.pos)
         this.host.sceneAdd()
     }
 
@@ -790,6 +792,8 @@ export default class VJPanel {
 
     recallScene(i, opts) {
         if (!this.scenes[i]) return
+        // knob layouts are per scene: park the leaving scene's, load this one's
+        this.midi.sceneSwitch(this.cycle.pos, i)
         this.cycle.pos = i // manual recalls steer the auto-cycle too
         this.host.sceneRecall(i, opts)
         this.rebuild()
@@ -797,6 +801,7 @@ export default class VJPanel {
 
     clearScene(i) {
         if (this.cycle.pos === i) this.cycle.pos = -1
+        this.midi.sceneCleared(i)
         this.host.sceneClear(i)
     }
 
