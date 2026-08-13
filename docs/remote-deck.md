@@ -267,6 +267,15 @@ Right-click (long-press on touch) still opens the full menu per row:
 - **Scene pads** — *midi learn* on a scene slot recalls it on a pad hit.
 - **HUSH** — right-click it and hit a pad: panic button on hardware.
 
+**Controller LEDs** (opt-in): right-click ⚡ MAP → *controller LEDs:
+light only assigned controls*. The deck darkens the board and echoes
+each assigned control's own message back (note-on / CC, velocity 127),
+which lights exactly the mapped knobs and pads on controllers whose
+LEDs accept external MIDI — Korg nano* devices need their editor's LED
+mode set to *external* first. It re-lights automatically when the
+device reconnects, and it's off by default because a synth on the same
+MIDI bus would interpret those note-ons as actual notes.
+
 A learn that lands on a knob or pad which already drives something else
 asks before stealing it ("CC7 already controls noise scale — reassign /
 keep it"), so a slip of the hand can't silently unmap a control.

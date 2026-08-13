@@ -18,6 +18,7 @@ import { edits } from './patcher.js'
 import { fmtNumber } from './metadata.js'
 
 const KEY = 'hydra-vj-midi'
+const LED_KEY = 'hydra-vj-midi-led'
 const COMMIT_IDLE_MS = 600
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
@@ -63,6 +64,114 @@ export default class MidiControl {
 
     persist() {
         try { localStorage.setItem(KEY, JSON.stringify(this.mappings)) } catch (e) { /* ignore */ }
+        this.syncLeds() // diff-based: no-op unless assignments changed
+    }
+
+    // ---- controller LED feedback (opt-in, ⚡ MAP right-click) ------------
+    // Light only the ASSIGNED knobs/pads. We can only speak generic MIDI:
+    // echoing a control's own message back (note-on vel 127 / CC value 127)
+    // lights it on most pad and knob controllers, 0 darkens it. Opt-in
+    // because unsolicited note-ons would PLAY notes on a synth that happens
+    // to be connected too. Devices whose LEDs are driven internally (Korg
+    // nano* default mode) need their editor set to 'external' LED mode.
+
+    ledEnabled() {
+        try { return localStorage.getItem(LED_KEY) === '1' } catch (e) { return false }
+    }
+
+    async setLed(on) {
+        try {
+            if (on) localStorage.setItem(LED_KEY, '1')
+            else localStorage.removeItem(LED_KEY)
+        } catch (e) { /* private mode */ }
+        if (on) {
+            if (!(await this.enable())) return false
+            this.syncLeds(true)
+        } else {
+            this._ledOff()
+        }
+        return true
+    }
+
+    // the controller's own output port usually carries the same name as its
+    // input — prefer those, so we don't blast a second, output-only device
+    _ledOuts() {
+        const outs = []
+        const all = []
+        if (!this.access || !this.access.outputs) return outs
+        const inNames = new Set()
+        this.access.inputs.forEach((i) => inNames.add(i.name))
+        this.access.outputs.forEach((o) => {
+            all.push(o)
+            if (inNames.has(o.name)) outs.push(o)
+        })
+        return outs.length ? outs : all
+    }
+
+    _litSet() {
+        const lit = new Set()
+        for (const m of Object.values(this.mappings.params)) {
+            const ch = m.ch || 0
+            if (m.note !== undefined) lit.add(`n${m.note}c${ch}`)
+            else if (m.cc !== undefined) lit.add(`c${m.cc}c${ch}`)
+        }
+        Object.keys(this.mappings.scenes).forEach((k) => lit.add(k))
+        Object.keys(this.mappings.actions).forEach((k) => lit.add(k))
+        return lit
+    }
+
+    _ledMsg(key, on) {
+        let m = /^n(\d+)c(\d+)$/.exec(key)
+        if (m) return [(on ? 0x90 : 0x80) | +m[2], +m[1], on ? 127 : 0]
+        m = /^c(\d+)c(\d+)$/.exec(key)
+        if (m) return [0xb0 | +m[2], +m[1], on ? 127 : 0]
+        return null
+    }
+
+    // `full` also darkens every note/CC first (on the channels involved),
+    // so a device that woke up fully lit starts from black
+    syncLeds(full) {
+        if (!this.ledEnabled() || !this.access) return
+        const outs = this._ledOuts()
+        if (!outs.length) return
+        const send = (msg) => outs.forEach((o) => { try { o.send(msg) } catch (e) { /* port closed */ } })
+        const lit = this._litSet()
+        if (full) {
+            const chans = new Set([0])
+            lit.forEach((k) => { const m = /c(\d+)$/.exec(k); if (m) chans.add(+m[1]) })
+            for (const ch of chans) {
+                for (let n = 0; n < 128; n++) {
+                    send([0x80 | ch, n, 0])
+                    send([0xb0 | ch, n, 0])
+                }
+            }
+            this._lit = new Set()
+        }
+        const prev = this._lit || new Set()
+        for (const k of prev) {
+            if (!lit.has(k)) {
+                const msg = this._ledMsg(k, false)
+                if (msg) send(msg)
+            }
+        }
+        for (const k of lit) {
+            if (!prev.has(k)) {
+                const msg = this._ledMsg(k, true)
+                if (msg) send(msg)
+            }
+        }
+        this._lit = lit
+    }
+
+    _ledOff() {
+        if (!this.access) return
+        const outs = this._ledOuts()
+        const prev = this._lit || this._litSet()
+        for (const k of prev) {
+            const msg = this._ledMsg(k, false)
+            if (msg) outs.forEach((o) => { try { o.send(msg) } catch (e) { /* port closed */ } })
+        }
+        this._lit = new Set()
     }
 
     hasMappings() {
@@ -84,6 +193,7 @@ export default class MidiControl {
         this.error = null
         const attach = () => {
             this.access.inputs.forEach((input) => { input.onmidimessage = (e) => this.onMessage(e.data) })
+            this.syncLeds(true) // re-light assigned controls on (re)connect
         }
         attach()
         this.access.onstatechange = attach

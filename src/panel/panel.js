@@ -1296,8 +1296,22 @@ export default class VJPanel {
         if (this.midi.available) {
             const map = el(d, 'button', 'vj-fft vj-assignbtn' + (this.midiAssign ? ' vj-on' : ''), '⚡ MAP')
             map.title = this.tr('panel.assign',
-                'MIDI assign mode: tap a value row, scene pad or HUSH, then move a knob or hit a pad — one tap per mapping. Tap again (or Esc) to exit')
+                'MIDI assign mode: tap a value row, scene pad or HUSH, then move a knob or hit a pad — one tap per mapping. Tap again (or Esc) to exit') +
+                ' — ' + this.tr('panel.assign-rc', 'right-click: controller LED options')
             map.onclick = () => this.setAssignMode(!this.midiAssign)
+            map.oncontextmenu = (e) => {
+                e.preventDefault()
+                const on = this.midi.ledEnabled()
+                this.openItemsMenu(d, this.hostRootFor(map), map, [{
+                    label: (on ? '● ' : '○ ') + this.tr('panel.led-feedback', 'controller LEDs: light only assigned controls'),
+                    fn: () => { this.midi.setLed(!on).then(() => this.renderAll()) }
+                }, {
+                    label: this.tr('panel.led-feedback-hint',
+                        'works on controllers whose LEDs accept MIDI echo (set Korg nano* to external LED mode)'),
+                    info: true,
+                    fn: () => {}
+                }])
+            }
             rail.appendChild(map)
         }
 
