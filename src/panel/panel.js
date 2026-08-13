@@ -269,6 +269,11 @@ export default class VJPanel {
     }
 
     renderAll() {
+        // LED feedback follows the loaded sketch: a scene switch parks the old
+        // scene's mappings (their paths stop resolving) and wakes the new
+        // one's, and the controller should show exactly the live set. Diffed
+        // against what's already lit, so this is a no-op on ordinary renders.
+        this.midi.syncLeds()
         // an open menu must survive background rebuilds — once a MIDI mapping
         // is streaming, quiet commits rebuild the deck every ~600ms and would
         // otherwise slam every popover shut (and long-press menus would never

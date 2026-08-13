@@ -13,7 +13,11 @@
 // maps straight onto that span); clearing it goes back to unlimited.
 // Mappings persist
 // in localStorage, keyed by the arg's stable path (which embeds the function
-// name, so a mapping deactivates when the sketch structure changes under it).
+// name, so a mapping deactivates when the sketch structure changes under it —
+// and wakes up again when a scene with that structure comes back). Ownership
+// is scene-scoped: the reassign prompt, control stealing and the LED ring only
+// consider mappings whose path resolves in the CURRENT sketch, so every scene
+// can reuse the same knobs without trampling the others' assignments.
 import { edits } from './patcher.js'
 import { fmtNumber } from './metadata.js'
 
@@ -110,7 +114,8 @@ export default class MidiControl {
 
     _litSet() {
         const lit = new Set()
-        for (const m of Object.values(this.mappings.params)) {
+        for (const [path, m] of Object.entries(this.mappings.params)) {
+            if (!this._resolves(path)) continue // parked on another scene's sketch
             const ch = m.ch || 0
             if (m.note !== undefined) lit.add(`n${m.note}c${ch}`)
             else if (m.cc !== undefined) lit.add(`c${m.cc}c${ch}`)
@@ -363,15 +368,30 @@ export default class MidiControl {
         this.persist()
     }
 
+    // does this mapping's param exist in the sketch that's loaded right now?
+    // Mappings from other scenes stay persisted but dormant — they must not
+    // trigger the reassign prompt, get stolen, or light LEDs.
+    _resolves(path) {
+        try {
+            const model = this.c.ctx().getModel()
+            if (!model || !model.pathIndex) return true // no sketch yet — don't guess
+            return model.pathIndex.has(path)
+        } catch (e) {
+            return true
+        }
+    }
+
     // who holds this hardware control right now (for the reassign prompt)?
     // Returns a short human description, or null when it's free — or held
-    // by the very target being learned (silent re-learn).
+    // by the very target being learned (silent re-learn). Mappings parked on
+    // params of OTHER scenes don't count: the control is free here.
     _controlOwner(ctl, ch, l) {
         for (const [path, m] of Object.entries(this.mappings.params)) {
             if (m.ch !== ch) continue
             if ((ctl.cc !== undefined && m.cc === ctl.cc) ||
                 (ctl.note !== undefined && m.note === ctl.note)) {
                 if (l.path === path) return null
+                if (!this._resolves(path)) continue
                 return this._pathDesc(path)
             }
         }
@@ -423,14 +443,17 @@ export default class MidiControl {
         this.c.renderAll()
     }
 
-    // one hardware control drives one thing: a fresh learn steals the knob or
-    // pad from whatever held it before — params, scene pads and actions alike
+    // one hardware control drives one thing IN THE CURRENT SKETCH: a fresh
+    // learn steals the knob or pad from whatever resolvable mapping held it —
+    // params, scene pads and actions alike. Assignments parked on other
+    // scenes' params are left alone; they resolve again when that scene
+    // returns, so every scene keeps its own layout on the same controller.
     _releaseControl(ctl, ch) {
         for (const [path, m] of Object.entries(this.mappings.params)) {
             if (m.ch !== ch) continue
             if ((ctl.cc !== undefined && m.cc === ctl.cc) ||
                 (ctl.note !== undefined && m.note === ctl.note)) {
-                delete this.mappings.params[path]
+                if (this._resolves(path)) delete this.mappings.params[path]
             }
         }
         if (ctl.note !== undefined) {

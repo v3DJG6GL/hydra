@@ -280,12 +280,17 @@ device reconnects, and it's off by default because a synth on the same
 MIDI bus would interpret those note-ons as actual notes.
 
 A learn that lands on a knob or pad which already drives something else
-asks before stealing it ("CC7 already controls noise scale — reassign /
-keep it"), so a slip of the hand can't silently unmap a control.
+*in the loaded sketch* asks before stealing it ("CC7 already controls
+noise scale — reassign / keep it"), so a slip of the hand can't silently
+unmap a control.
 
-Mappings persist per browser and deactivate automatically when the sketch
-structure changes underneath them (they're keyed to the function the
-param belongs to).
+Assignments are scene-scoped: the same knob can drive a different param
+in every scene. A mapping goes dormant when its sketch isn't loaded — it
+doesn't trigger the reassign question, can't be stolen by a learn in
+another scene, and its LED stays dark — and wakes up again the moment
+its scene comes back. Mappings persist per browser, keyed to the
+function the param belongs to, so they also deactivate when the sketch
+structure changes underneath them.
 
 ## Live preview
 
