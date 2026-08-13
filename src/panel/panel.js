@@ -285,10 +285,16 @@ export default class VJPanel {
             return
         }
         this._renderQueued = false
-        if (this.dockRoot && !this.state.panel.popup && !this.state.panel.pip) this.renderInto(this.dockRoot)
-        if (this.popupRoot && this.popupWin && !this.popupWin.closed) this.renderInto(this.popupRoot)
-        if (this.pipRoot && this.pipWin) this.renderInto(this.pipRoot)
-        if (this.remoteRoot) this.renderInto(this.remoteRoot)
+        this._eachRoot((root) => this.renderInto(root))
+    }
+
+    // every root the deck is currently rendering into (dock, pop-out, PiP,
+    // remote) — the same set renderAll rebuilds
+    _eachRoot(fn) {
+        if (this.dockRoot && !this.state.panel.popup && !this.state.panel.pip) fn(this.dockRoot)
+        if (this.popupRoot && this.popupWin && !this.popupWin.closed) fn(this.popupRoot)
+        if (this.pipRoot && this.pipWin) fn(this.pipRoot)
+        if (this.remoteRoot) fn(this.remoteRoot)
     }
 
     // --------------------------------------------- document picture-in-picture
@@ -1153,7 +1159,17 @@ export default class VJPanel {
     // carries the interrupted learn so "keep it" can re-arm it.
     confirmReassign(ctl, ownerDesc, onYes, learn) {
         this._confirm = { ctl, ownerDesc, onYes, learn }
-        this.renderAll()
+        // mounted directly: renderAll() defers whole rebuilds while the
+        // question is open (so a MIDI-stream rebuild can't swap the buttons
+        // out mid-click) — which also means it can never mount the dialog
+        // itself. Going through renderAll here left _confirm set forever
+        // with no dialog on screen, freezing every later render.
+        this._unmountConfirm()
+        this._eachRoot((root) => root.appendChild(this._renderConfirm(root.ownerDocument)))
+    }
+
+    _unmountConfirm() {
+        this._eachRoot((root) => root.querySelectorAll('.vj-confirm').forEach((n) => n.remove()))
     }
 
     // declining keeps the old mapping AND keeps the learn armed (ignoring
@@ -1162,6 +1178,7 @@ export default class VJPanel {
     _closeConfirm(declined) {
         const c = this._confirm
         this._confirm = null
+        this._unmountConfirm()
         if (declined && c && c.learn) {
             this.midi.rearm(c.learn.l, c.learn.ctl)
             if (this.host && this.host._fire) {
@@ -1185,6 +1202,7 @@ export default class VJPanel {
         const yes = el(d, 'button', 'vj-confirm-btn vj-confirm-yes', this.tr('panel.reassign-yes', 'reassign'))
         yes.onclick = () => {
             this._confirm = null
+            this._unmountConfirm()
             c.onYes() // persists + re-renders
         }
         const no = el(d, 'button', 'vj-confirm-btn', this.tr('panel.reassign-no', 'keep it'))

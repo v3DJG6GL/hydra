@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MIDI Debug · Hydra VJ</title>
+<style>
+    /* deliberately single-theme: this is a hardware console */
+    :root {
+        --chassis: #0a0b0d; --module: #14161a; --line: #2a2e35;
+        --silk: #d6dae0; --dim: #8891a0; --armed: #ff0066;
+        --ok: #23e0a0; --warn: #ffb000; --blue: #4da6ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--chassis); color: var(--silk); }
+    body { font: 13px/1.5 "JetBrains Mono", "Fira Mono", ui-monospace, monospace; padding: 16px; max-width: 980px; margin: 0 auto; }
+    h1 { font-size: 15px; letter-spacing: .12em; margin: 0 0 2px; }
+    h1 .v { color: var(--dim); font-weight: normal; letter-spacing: 0; }
+    h2 { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin: 0 0 8px; }
+    .sub { color: var(--dim); margin: 0 0 14px; }
+    .card { background: var(--module); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin: 0 0 12px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+    .badge { border: 1px solid var(--line); border-radius: 4px; padding: 1px 8px; color: var(--dim); font-size: 12px; }
+    .badge.on { color: var(--ok); border-color: var(--ok); }
+    .badge.off { color: var(--warn); border-color: var(--warn); }
+    button { background: transparent; border: 1px solid var(--line); border-radius: 4px; color: var(--silk); font: inherit; padding: 4px 12px; cursor: pointer; }
+    button:hover { border-color: var(--silk); }
+    button:focus-visible { outline: 2px solid var(--armed); outline-offset: 2px; }
+    button.primary { border-color: var(--armed); color: var(--armed); }
+    button.primary:hover { background: var(--armed); color: var(--chassis); }
+    button.yes { border-color: var(--ok); color: var(--ok); }
+    button.no { border-color: var(--warn); color: var(--warn); }
+    button:disabled { opacity: .35; cursor: default; }
+    select, input[type=text] { background: var(--chassis); border: 1px solid var(--line); border-radius: 4px; color: var(--silk); font: inherit; padding: 4px 8px; }
+    .probe { border-top: 1px solid var(--line); padding: 10px 0; }
+    .probe:first-of-type { border-top: 0; }
+    .probe .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .probe .num { color: var(--armed); }
+    .probe .q { color: var(--dim); margin: 6px 0 8px; }
+    .probe .watch { color: var(--warn); }
+    .probe .state { margin-left: auto; color: var(--dim); }
+    .probe.answered-yes .state { color: var(--ok); }
+    .probe.answered-no .state { color: var(--warn); }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #ports div { padding: 1px 0; }
+    .tag { display: inline-block; min-width: 46px; text-align: center; border: 1px solid var(--line); border-radius: 3px; margin-right: 8px; font-size: 11px; color: var(--dim); }
+    .tag.daw { color: var(--armed); border-color: var(--armed); }
+    .tag.xl3 { color: var(--blue); border-color: var(--blue); }
+    #mon { height: 220px; overflow-y: auto; background: var(--chassis); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; white-space: pre; font-size: 12px; }
+    #mon .in { color: var(--ok); } #mon .out { color: var(--armed); } #mon .note { color: var(--blue); }
+    #report { width: 100%; height: 180px; background: var(--chassis); color: var(--silk); border: 1px solid var(--line); border-radius: 4px; font: inherit; font-size: 12px; padding: 8px; resize: vertical; }
+    a { color: var(--blue); }
+    @media (prefers-reduced-motion: no-preference) {
+        .counting { animation: pulse 1s infinite; }
+        @keyframes pulse { 50% { opacity: .4; } }
+    }
+</style>
+</head>
+<body>
+<h1>HYDRA VJ · MIDI DEBUG <span class="v">v1 · 2026-08-13</span></h1>
+<p class="sub">Hardware LED probe console for the Launch Control XL 3. Run it on the same machine the
+controller is plugged into, over https with a hostname (Firefox refuses Web MIDI on plain http or bare-IP origins).
+Answer each probe by looking at the hardware, then copy the report at the bottom and paste it back.</p>
+
+<div class="card">
+    <div class="row">
+        <button id="connect" class="primary">CONNECT MIDI</button>
+        <span id="connmsg" class="sub" style="margin:0"></span>
+    </div>
+    <div class="badges">
+        <span class="badge" id="b-secure">secure context</span>
+        <span class="badge" id="b-sysex">sysex</span>
+        <span class="badge" id="b-daw">XL3 DAW port</span>
+    </div>
+</div>
+
+<div class="card"><h2>Ports</h2><div id="ports">—</div></div>
+
+<div class="card">
+    <h2>Probes — in order, watching the controller</h2>
+    <div class="row" style="margin-bottom:6px">
+        <label>DAW out: <select id="dawout"></select></label>
+        <label>custom mode: <select id="custmode"></select></label>
+    </div>
+    <div id="probes"></div>
+</div>
+
+<div class="card">
+    <h2>Monitor <button id="monpause" style="font-size:11px;padding:1px 8px">pause</button>
+        <button id="monclear" style="font-size:11px;padding:1px 8px">clear</button></h2>
+    <div id="mon"></div>
+</div>
+
+<div class="card">
+    <h2>Raw send</h2>
+    <div class="row">
+        <select id="rawout"></select>
+        <input type="text" id="rawhex" size="36" placeholder="hex bytes, e.g. b0 0d 25" spellcheck="false">
+        <button id="rawsend">send</button>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Report <button id="copy" style="font-size:11px;padding:1px 8px">copy</button></h2>
+    <textarea id="report" readonly spellcheck="false"></textarea>
+</div>
+
+<script>
+'use strict'
+/* eslint-disable */
+const $ = (id) => document.getElementById(id)
+const DAW_RE = /\bDAW\b|MIDIIN2|MIDIOUT2/i
+const XL3_RE = /LCXL3|launch\s*control\s*xl\s*3/i
+const S = { access: null, sysex: false, paused: false, monLines: 0, report: [] }
+
+const now = () => new Date().toTimeString().slice(0, 8)
+const hex = (data) => Array.from(data).map((b) => b.toString(16).padStart(2, '0')).join(' ')
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+function rep(line) {
+    S.report.push(`${now()} ${line}`)
+    $('report').value = S.report.join('\n')
+    $('report').scrollTop = 1e9
+}
+
+function decode(d) {
+    if (!d || !d.length) return ''
+    const st = d[0] & 0xf0, ch = (d[0] & 0x0f) + 1
+    if (d[0] === 0xf0) return 'sysex'
+    if (st === 0x90) return d[2] ? `note-on ch${ch} #${d[1]} v${d[2]}` : `note-off ch${ch} #${d[1]}`
+    if (st === 0x80) return `note-off ch${ch} #${d[1]}`
+    if (st === 0xb0) {
+        let extra = ''
+        if (ch === 7 && d[1] === 0x1e) extra = ` ← SURFACE MODE = ${d[2]}`
+        if (ch === 15) extra = d[2] ? ` ← TOUCH idx ${d[1]}` : ` ← release idx ${d[1]}`
+        return `cc ch${ch} #${d[1]} = ${d[2]}${extra}`
+    }
+    if (st === 0xe0) return `pitchbend ch${ch}`
+    return ''
+}
+
+function mon(dir, port, data) {
+    if (S.paused) return
+    const el = document.createElement('div')
+    const cls = DAW_RE.test(port) ? 'daw' : (XL3_RE.test(port) ? 'xl3' : '')
+    el.innerHTML = `<span class="${dir === 'rx' ? 'in' : 'out'}">${dir}</span> ` +
+        `<span class="tag ${cls}">${cls ? cls.toUpperCase() : 'PORT'}</span>` +
+        `${hex(data)}  <span class="note">${decode(data)}</span>`
+    const m = $('mon')
+    m.appendChild(el)
+    if (++S.monLines > 400) { m.removeChild(m.firstChild); S.monLines-- }
+    m.scrollTop = 1e9
+}
+
+function outs() { const o = []; if (S.access) S.access.outputs.forEach((p) => o.push(p)); return o }
+function ins() { const i = []; if (S.access) S.access.inputs.forEach((p) => i.push(p)); return i }
+function dawOut() {
+    const id = $('dawout').value
+    return outs().find((p) => p.id === id) || null
+}
+function send(port, data) {
+    if (!port) { rep('!! no output port selected'); return }
+    port.send(data)
+    mon('tx', port.name, data)
+}
+
+function refreshPorts() {
+    const rows = []
+    const opt = (sel, ports, preferDaw) => {
+        const keep = sel.value
+        sel.innerHTML = ''
+        ports.forEach((p) => {
+            const o = document.createElement('option')
+            o.value = p.id
+            o.textContent = p.name
+            sel.appendChild(o)
+        })
+        const daw = ports.find((p) => XL3_RE.test(p.name) && DAW_RE.test(p.name))
+        if (keep && ports.some((p) => p.id === keep)) sel.value = keep
+        else if (preferDaw && daw) sel.value = daw.id
+    }
+    ins().forEach((p) => rows.push(portRow('in', p)))
+    outs().forEach((p) => rows.push(portRow('out', p)))
+    $('ports').innerHTML = rows.join('') || '—'
+    opt($('dawout'), outs(), true)
+    opt($('rawout'), outs(), true)
+    const hasDaw = outs().some((p) => XL3_RE.test(p.name) && DAW_RE.test(p.name))
+    badge('b-daw', hasDaw, hasDaw ? 'XL3 DAW port found' : 'XL3 DAW port missing')
+    ins().forEach((p) => { p.onmidimessage = (e) => onRx(p, e.data) })
+}
+
+function portRow(dir, p) {
+    const cls = XL3_RE.test(p.name) ? (DAW_RE.test(p.name) ? 'daw' : 'xl3') : ''
+    return `<div><span class="tag ${cls}">${dir.toUpperCase()}</span>${p.name} <span style="color:var(--dim)">(${p.state})</span></div>`
+}
+
+function onRx(port, data) {
+    if (data[0] === 0xf8 || data[0] === 0xfe) return
+    mon('rx', port.name, data)
+    // surface-mode reports and feature ACKs are the interesting wire facts — keep them in the report
+    if ((data[0] === 0xb6 && data[1] === 0x1e) || ((data[0] & 0xf0) === 0x90 && (data[0] & 0x0f) === 15))
+        rep(`rx [${port.name}] ${hex(data)} (${decode(data)})`)
+}
+
+function badge(id, on, text) {
+    const b = $(id)
+    b.className = 'badge ' + (on ? 'on' : 'off')
+    if (text) b.textContent = text
+}
+
+$('connect').onclick = async () => {
+    if (!navigator.requestMIDIAccess) { $('connmsg').textContent = 'Web MIDI unavailable in this browser/origin'; return }
+    try {
+        S.access = await navigator.requestMIDIAccess({ sysex: true })
+        S.sysex = true
+    } catch (e) {
+        try { S.access = await navigator.requestMIDIAccess(); S.sysex = false }
+        catch (e2) { $('connmsg').textContent = 'MIDI access refused: ' + e2.message; rep('!! MIDI refused: ' + e2.message); return }
+    }
+    badge('b-sysex', S.sysex, S.sysex ? 'sysex granted' : 'sysex denied (P5 skipped)')
+    $('connmsg').textContent = 'connected'
+    S.access.onstatechange = refreshPorts
+    refreshPorts()
+    rep(`connected · ua: ${navigator.userAgent}`)
+    rep(`secureContext=${window.isSecureContext} sysex=${S.sysex}`)
+    ins().concat(outs()).forEach((p) => rep(`port ${p.type}: ${p.name}`))
+}
+
+// ---------------------------------------------------------------- probes
+const custSel = $('custmode')
+for (let i = 1; i <= 16; i++) {
+    const o = document.createElement('option')
+    o.value = i <= 4 ? 5 + i : 13 + i // custom 1-4 → 6-9, custom 5-16 → 18-29
+    o.textContent = `custom ${i} (mode ${o.value})`
+    custSel.appendChild(o)
+}
+
+const PROBES = [
+    {
+        id: 'P1', title: 'Enter DAW mode',
+        q: 'Did the screen/LEDs change (screen shows a DAW-ish mode, most LEDs dark)?',
+        run: async () => { send(dawOut(), [0x9f, 0x0c, 0x7f]) }
+    },
+    {
+        id: 'P2', title: 'Re-select your custom mode + touch events on',
+        q: 'Is the surface back on your custom mode, LEDs showing their usual colours?',
+        run: async () => {
+            send(dawOut(), [0xb6, 0x1e, +custSel.value])
+            await sleep(150)
+            send(dawOut(), [0xb6, 0x47, 0x7f])
+        }
+    },
+    {
+        id: 'P3', title: 'Dark pass (waits 3 s for the device to settle first)', decisive: true,
+        q: 'Did ALL fader/encoder/button LEDs go dark — and STAY dark?',
+        run: async (card) => {
+            for (let t = 3; t > 0; t--) { card.querySelector('.q').textContent = `waiting ${t}s — then watch the LEDs…`; await sleep(1000) }
+            card.querySelector('.q').textContent = PROBES[2].q
+            for (let i = 5; i <= 52; i++) { send(dawOut(), [0xb0, i, 0]); await sleep(5) }
+        }
+    },
+    {
+        id: 'P4', title: 'Rainbow on the top encoder row',
+        q: 'Does the TOP encoder row show 8 different colours (red → pink)?',
+        run: async () => {
+            const pal = [5, 9, 13, 21, 29, 37, 45, 53]
+            for (let i = 0; i < 8; i++) { send(dawOut(), [0xb0, 13 + i, pal[i]]); await sleep(5) }
+        }
+    },
+    {
+        id: 'P5', title: 'RGB SysEx — middle-row encoder 1 magenta (needs sysex)',
+        q: 'Is the FIRST encoder of the MIDDLE row magenta?',
+        run: async () => {
+            if (!S.sysex) { rep('P5 skipped: sysex not granted'); return }
+            send(dawOut(), [0xf0, 0x00, 0x20, 0x29, 0x02, 0x15, 0x01, 0x53, 21, 0x7f, 0x00, 0x7f, 0xf7])
+        }
+    },
+    {
+        id: 'P6', title: 'Grab a few knobs and move them',
+        q: 'While grabbing: TOUCH lines appear in the monitor AND your normal knob CCs still arrive?',
+        run: async () => { rep('P6: user grabbing controls — watch monitor for TOUCH + custom CCs') }
+    },
+    {
+        id: 'P7', title: 'Exit DAW mode',
+        q: 'Did the device repaint back to its normal custom-mode state?',
+        run: async () => {
+            send(dawOut(), [0xb6, 0x47, 0x00])
+            await sleep(100)
+            send(dawOut(), [0x9f, 0x0c, 0x00])
+        }
+    },
+]
+
+const probesEl = $('probes')
+PROBES.forEach((p) => {
+    const card = document.createElement('div')
+    card.className = 'probe'
+    card.innerHTML = `<div class="head"><span class="num">${p.id}</span> <b>${p.title}</b>` +
+        `${p.decisive ? ' <span class="watch">← the decisive one</span>' : ''}` +
+        `<span class="state">unanswered</span></div>` +
+        `<div class="q">${p.q}</div>` +
+        `<div class="row"><button class="run">RUN</button>` +
+        `<button class="yes" disabled>YES</button><button class="no" disabled>NO</button></div>`
+    const [run, yes, no] = card.querySelectorAll('button')
+    run.onclick = async () => {
+        if (!S.access) { rep('!! connect MIDI first'); return }
+        run.disabled = true; run.classList.add('counting')
+        rep(`${p.id} RUN (${p.title})`)
+        try { await p.run(card) } catch (e) { rep(`!! ${p.id} error: ${e.message}`) }
+        run.disabled = false; run.classList.remove('counting')
+        yes.disabled = no.disabled = false
+    }
+    const answer = (a) => {
+        rep(`${p.id} ANSWER: ${a}`)
+        card.classList.remove('answered-yes', 'answered-no')
+        card.classList.add(a === 'YES' ? 'answered-yes' : 'answered-no')
+        card.querySelector('.state').textContent = a
+    }
+    yes.onclick = () => answer('YES')
+    no.onclick = () => answer('NO')
+    probesEl.appendChild(card)
+})
+
+// ---------------------------------------------------------------- raw + misc
+$('rawsend').onclick = () => {
+    const bytes = $('rawhex').value.trim().split(/[\s,]+/).filter(Boolean).map((h) => parseInt(h, 16))
+    if (!bytes.length || bytes.some((b) => isNaN(b) || b < 0 || b > 255)) { rep('!! raw send: bad hex'); return }
+    const port = outs().find((p) => p.id === $('rawout').value)
+    try { send(port, bytes); rep(`raw tx [${port && port.name}] ${hex(bytes)}`) }
+    catch (e) { rep(`!! raw send failed: ${e.message}`) }
+}
+$('monpause').onclick = () => { S.paused = !S.paused; $('monpause').textContent = S.paused ? 'resume' : 'pause' }
+$('monclear').onclick = () => { $('mon').innerHTML = ''; S.monLines = 0 }
+$('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('report').value); $('copy').textContent = 'copied' }
+    catch (e) { $('report').focus(); $('report').select(); $('copy').textContent = 'select+ctrl-c' }
+    setTimeout(() => { $('copy').textContent = 'copy' }, 1500)
+}
+badge('b-secure', window.isSecureContext, window.isSecureContext ? 'secure context' : 'NOT a secure context — Web MIDI blocked')
+badge('b-sysex', false, 'sysex: not connected yet')
+badge('b-daw', false, 'XL3 DAW port: not connected yet')
+rep('hydra midi-debug v1 loaded — hit CONNECT MIDI')
+</script>
+</body>
+</html>

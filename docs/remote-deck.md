@@ -299,6 +299,14 @@ its colour. Turning the option off (or closing the deck) exits DAW mode
 and hands the LEDs back to the device. The two 16-button rows send no
 touch events, so their LEDs stay device-driven.
 
+**MIDI hardware debugging**: the deck ships a standalone probe console
+at `/midi-debug.html` (same origin as the deck). It lists ports, live-
+monitors all incoming MIDI, and walks through a numbered LED probe
+sequence for the XL 3 — each step sends the documented wire messages
+and asks what the hardware actually shows, building a copyable report.
+Use it whenever LED feedback misbehaves: the report pins down whether
+the device accepts external colours in the active surface mode.
+
 A learn that lands on a knob or pad which already drives something else
 *in the loaded sketch* asks before stealing it ("CC7 already controls
 noise scale — reassign / keep it"). Choosing *keep it* (or Esc) keeps
