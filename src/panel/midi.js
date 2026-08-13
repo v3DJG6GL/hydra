@@ -156,9 +156,11 @@ export default class MidiControl {
     }
 
     // hint: the value a pad's on-level derives from when the arg isn't in the
-    // model yet (a ghost default still being materialized on a remote deck)
+    // model yet (a ghost default still being materialized on a remote deck).
+    // Default mode 'auto': the first thing the hardware sends decides — a CC
+    // becomes a knob mapping, a note-on becomes a toggle pad.
     startLearn(path, mode, hint) {
-        return this._arm({ path, mode: mode || 'cc', hint })
+        return this._arm({ path, mode: mode || 'auto', hint })
     }
 
     startLearnScene(slot) {
@@ -256,7 +258,6 @@ export default class MidiControl {
             const key = `n${d1}c${ch}`
             if (this.learning) {
                 const l = this.learning
-                if (l.path != null && l.mode === 'cc') return // knob learn armed — pads don't complete it
                 this._releaseControl({ note: d1 }, ch)
                 if (l.scene != null) this.mappings.scenes[key] = l.scene
                 else if (l.action) this.mappings.actions[key] = l.action
@@ -266,7 +267,8 @@ export default class MidiControl {
                     const model = this.c.ctx().getModel()
                     const arg = model && model.pathIndex.get(l.path)
                     const v0 = arg ? arg.value : (isFinite(l.hint) ? l.hint : 0)
-                    this.mappings.params[l.path] = { note: d1, ch, mode: l.mode, on: v0 || 1 }
+                    const mode = l.mode === 'auto' ? 'toggle' : l.mode
+                    this.mappings.params[l.path] = { note: d1, ch, mode, on: v0 || 1 }
                 }
                 this.learning = null
                 this.persist()
@@ -290,7 +292,8 @@ export default class MidiControl {
             return
         }
         if (kind !== 0xb0) return // control change from here on
-        if (this.learning && this.learning.path != null && this.learning.mode === 'cc') {
+        if (this.learning && this.learning.path != null &&
+            (this.learning.mode === 'auto' || this.learning.mode === 'cc')) {
             const { path } = this.learning
             this.learning = null
             this._releaseControl({ cc: d1 }, ch)

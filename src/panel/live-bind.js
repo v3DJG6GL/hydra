@@ -89,7 +89,6 @@ export default class LiveBind {
             this.clean = false
             return true
         }
-        items.sort((a, b) => b.arg.range[0] - a.arg.range[0])
         // bindings persist across invalidating evals (scene recall, shuffle,
         // code edits), so re-arming must not resurrect the value a control
         // wrote LAST time: refresh every uniform from the current text.
@@ -97,11 +96,44 @@ export default class LiveBind {
         // right after, so the driven param is unaffected — but an idle
         // binding must show the number that is actually in the code.
         for (const it of items) window.__vj[it.key] = it.arg.value
-        let text = model.text
+        // Three substitution shapes:
+        //  - a plain number arg becomes an arrow reading its uniform
+        //  - a literal inside a function-valued arg (audio/mouse bind scale,
+        //    a number in a () => formula) becomes the bare global — the
+        //    surrounding arrow already re-evaluates every frame
+        //  - a literal inside a CONSTANT expression (Math.PI/0.00003) needs
+        //    the whole expression wrapped in an arrow (arg.fnWrap carries
+        //    the expression's range), or the uniform would be read once
+        const singles = []
+        const wraps = new Map() // parent expr start -> {range, lits}
         for (const it of items) {
-            text = text.slice(0, it.arg.range[0]) +
-                `(() => window.__vj.${it.key})` +
-                text.slice(it.arg.range[1])
+            if (it.arg.fnWrap) {
+                const k = it.arg.fnWrap[0]
+                if (!wraps.has(k)) wraps.set(k, { range: it.arg.fnWrap, lits: [] })
+                wraps.get(k).lits.push(it)
+            } else {
+                singles.push(it)
+            }
+        }
+        const spans = singles.map((it) => ({
+            start: it.arg.range[0],
+            end: it.arg.range[1],
+            text: it.arg.inExpr ? `window.__vj.${it.key}` : `(() => window.__vj.${it.key})`
+        }))
+        for (const w of wraps.values()) {
+            let inner = model.text.slice(w.range[0], w.range[1])
+            w.lits.sort((a, b) => b.arg.range[0] - a.arg.range[0])
+            for (const it of w.lits) {
+                inner = inner.slice(0, it.arg.range[0] - w.range[0]) +
+                    `window.__vj.${it.key}` +
+                    inner.slice(it.arg.range[1] - w.range[0])
+            }
+            spans.push({ start: w.range[0], end: w.range[1], text: `() => (${inner})` })
+        }
+        spans.sort((a, b) => b.start - a.start)
+        let text = model.text
+        for (const s of spans) {
+            text = text.slice(0, s.start) + s.text + text.slice(s.end)
         }
         let failed = false
         this.evaling = true

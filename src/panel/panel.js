@@ -6,7 +6,7 @@
 // Everything that touches the sketch or the synth goes through `this.host`
 // (a host adapter): host-local.js in the main tab and its same-context
 // popup/PiP children, host-remote.js on a deck running on another device.
-import { buildModel, freeOutput } from './sketch-model.js'
+import { buildModel, freeOutput, exprLiterals } from './sketch-model.js'
 import { grouped, fmtNumber, fmtShort, INT_PARAMS } from './metadata.js'
 import { edits } from './patcher.js'
 import LocalHost from './host-local.js'
@@ -422,6 +422,7 @@ export default class VJPanel {
                 (sctl ? ' vj-midimapped vj-mc' + sctl.color : '') +
                 (this.midi.isLearningScene(i) ? ' vj-learning' : ''))
             if (sctl) slot.title = sctl.label
+            slot.dataset.slot = String(i) // assign mode maps pads by index
             slot.appendChild(el(d, 'span', 'vj-scene-num', String(i + 1)))
             if (scene && scene.cat) {
                 slot.appendChild(el(d, 'span', 'vj-scene-cat', '⌗' + scene.cat))
@@ -572,6 +573,8 @@ export default class VJPanel {
         }
         if (scene) {
             items.push({ groupRow: true })
+            // touch decks have no shift+click — overwrite lives here too
+            items.push({ label: this.tr('panel.scene-overwrite', 'overwrite with current sketch'), fn: () => this.saveScene(i) })
             items.push({ label: this.tr('panel.scene-copy', 'copy code'), fn: () => this.copyText(d, scene.code) })
             // reorder without drag & drop — the only way to reorder on touch
             if (i > 0) {
@@ -999,9 +1002,61 @@ export default class VJPanel {
         })
     }
 
+    // one-tap hardware mapping: with assign mode on (⚡ MAP), tapping any
+    // value row arms an auto learn for it — move a knob or hit a pad, done,
+    // and the mode stays on so a whole controller maps in one pass. Scene
+    // pads and HUSH assign the same way. ⚡ MAP again (or Esc) exits.
+    attachAssignMode(root) {
+        if (root.__vjAssign) return
+        root.__vjAssign = true
+        root.addEventListener('click', (e) => {
+            if (!this.midiAssign) return
+            const t = e.target
+            if (!t || !t.closest) return
+            if (t.closest('.vj-assignbtn') || t.closest('.vj-popover') || t.closest('.vj-codeedit')) return
+            const stop = () => { e.preventDefault(); e.stopPropagation() }
+            const scene = t.closest('.vj-scene')
+            if (scene && scene.dataset.slot !== undefined) {
+                stop()
+                this.midi.startLearnScene(parseInt(scene.dataset.slot, 10))
+                return
+            }
+            if (t.closest('.vj-hush')) {
+                stop()
+                this.midi.startLearnAction('hush')
+                return
+            }
+            const rowEl = t.closest('[data-path]')
+            if (!rowEl) return
+            const a = this.model && this.model.pathIndex.get(rowEl.dataset.path)
+            if (!a || a.kind !== 'number' || a.noLive) return
+            stop()
+            this.midi.startLearn(rowEl.dataset.path)
+        }, true)
+        const doc = root.ownerDocument
+        if (!doc.__vjAssignEsc) {
+            doc.__vjAssignEsc = true
+            doc.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && this.midiAssign) this.setAssignMode(false)
+            })
+        }
+    }
+
+    setAssignMode(on) {
+        this.midiAssign = !!on
+        if (!on && this.midi.learning) this.midi.cancelLearn()
+        if (on && this.host && this.host._fire) {
+            this.host._fire('toast', this.tr('panel.assign-hint',
+                'assign mode — tap a row, then move a knob or hit a pad'), 'info')
+        }
+        this.renderAll()
+    }
+
     renderInto(root) {
         const d = root.ownerDocument
         this.attachTouchMenus(root)
+        this.attachAssignMode(root)
+        root.classList.toggle('vj-assign', !!this.midiAssign)
         // every committed edit rebuilds this DOM from scratch — carry the
         // scroll offsets across the wipe so a value tweak deep in a long
         // chain doesn't fling the strip back to its start. index-keyed by
@@ -1198,6 +1253,15 @@ export default class VJPanel {
         }
 
         if (this.host.remote && this.fftShown) rail.appendChild(this.renderFftMeter(d))
+
+        // one-tap MIDI mapping mode (see attachAssignMode)
+        if (this.midi.available) {
+            const map = el(d, 'button', 'vj-fft vj-assignbtn' + (this.midiAssign ? ' vj-on' : ''), '⚡ MAP')
+            map.title = this.tr('panel.assign',
+                'MIDI assign mode: tap a value row, scene pad or HUSH, then move a knob or hit a pad — one tap per mapping. Tap again (or Esc) to exit')
+            map.onclick = () => this.setAssignMode(!this.midiAssign)
+            rail.appendChild(map)
+        }
 
         // stage view: drop the code/console/toolbar overlay, keep visuals + deck.
         // lit = code visible, matching the FFT button (lit = monitor visible)
@@ -1679,7 +1743,7 @@ export default class VJPanel {
         // every number inside the expression gets its own mini-fader, so the
         // amplitudes/frequencies of a () => … formula tune like any other
         // param — without leaving the deck or reading code
-        const lits = this.exprLiterals(arg.text).slice(0, 6)
+        const lits = exprLiterals(arg.text).slice(0, 6)
         if (!lits.length) {
             const wrap = el(d, 'div', 'vj-expr-wrap')
             wrap.appendChild(chipEl)
@@ -1691,37 +1755,11 @@ export default class VJPanel {
         head.appendChild(chipEl)
         head.appendChild(freeze)
         box.appendChild(head)
-        lits.forEach((lit) => box.appendChild(this.buildExprLitRow(d, arg, lit)))
+        lits.forEach((lit, li) => box.appendChild(this.buildExprLitRow(d, arg, lit, li)))
         return box
     }
 
-    // numeric literals inside an expression, with the char offsets to splice
-    // them back. Identifier tails (x2), property names and array indices
-    // (a.fft[0]) are skipped; a unary minus is folded into the literal so a
-    // drag can cross zero.
-    exprLiterals(text) {
-        const out = []
-        const re = /\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi
-        let m
-        while ((m = re.exec(text))) {
-            const before = text.slice(0, m.index)
-            const after = text.slice(m.index + m[0].length)
-            if (/[\w$.]$/.test(before)) continue
-            if (/^\s*\]/.test(after)) continue
-            let start = m.index
-            const sign = /-\s*$/.exec(before)
-            if (sign) {
-                const prev = before.slice(0, sign.index).trimEnd().slice(-1)
-                if (!prev || '(,*+-/%=<>&|?:'.includes(prev)) start = sign.index
-            }
-            const str = text.slice(start, m.index + m[0].length).replace(/\s+/g, '')
-            const value = parseFloat(str)
-            if (isFinite(value)) out.push({ start, len: m.index + m[0].length - start, value })
-        }
-        return out
-    }
-
-    buildExprLitRow(d, arg, lit) {
+    buildExprLitRow(d, arg, lit, litIdx) {
         const row = el(d, 'div', 'vj-bind-row')
         // a slice of the formula just before the number locates it visually
         let ctx = arg.text.replace(/^\(\)\s*=>\s*/, (p) => ' '.repeat(p.length)).slice(Math.max(0, lit.start - 9), lit.start).trim()
@@ -1731,25 +1769,72 @@ export default class VJPanel {
         row.appendChild(label)
         let cur = lit.value
         const val = el(d, 'span', 'vj-value', fmtShort(cur))
-        // commit-only: a live expression can't stream through LiveBind (the
-        // uniform would replace the whole function), so the splice happens on
-        // release / typed entry and re-evals like any other structural edit
         const splice = (v) => this.apply({
             from: arg.range[0] + lit.start,
             to: arg.range[0] + lit.start + lit.len,
             text: fmtNumber(v)
         }, { replaceURL: true })
+        // the lit is addressable in the model (path), so it streams through
+        // LiveBind like any fader — the shadow substitutes the bare global
+        // inside the expression (wrapping constant exprs in an arrow)
+        const path = arg.path ? `${arg.path}.l${litIdx}` : null
+        const litArg = () => (path && this.model && this.model.pathIndex.get(path)) || null
+        let liveKey = null
         const track = this.makeFader(d, {
             get: () => cur,
             ref: Math.max(Math.abs(lit.value), 0.05),
-            live: (v) => { cur = v; val.textContent = fmtShort(v) },
-            commit: (v) => splice(v)
+            start: () => {
+                const a = litArg()
+                if (a && !a.noLive) liveKey = this.lb.ensure(this.ctx(), path, a.value)
+            },
+            live: (v) => {
+                cur = v
+                val.textContent = fmtShort(v)
+                if (liveKey) this.lb.set(liveKey, v)
+            },
+            commit: (v) => {
+                const a = litArg()
+                if (liveKey && a && this.lb.isLive(path)) {
+                    this.lb.set(liveKey, parseFloat(fmtNumber(v)))
+                    this.applyQuiet(edits.setNumber(a, v))
+                } else {
+                    splice(v)
+                }
+                liveKey = null
+            },
+            cancel: (v0) => {
+                if (liveKey) this.lb.set(liveKey, v0)
+                liveKey = null
+            }
         })
-        track.title = this.tr('panel.expr-lit', 'a number inside the expression — drag to change (applies on release)')
+        track.title = this.tr('panel.expr-lit', 'a number inside the expression — drag to change')
+        if (path) {
+            row.dataset.path = path
+            this.attachMidiRow(d, row, track, path)
+        }
         this.attachValueEdit(d, val, { get: () => cur, set: (v) => splice(v) })
         row.appendChild(track)
         row.appendChild(val)
         return row
+    }
+
+    // MIDI wiring for a mini-fader row that addresses `path` (a literal
+    // inside an expression, or a bind widget's scale/offset): mapped-wire
+    // indicator + tag, learn highlight, and the learn/unlearn context menu
+    attachMidiRow(d, row, track, path) {
+        if (!this.model || !this.model.pathIndex.get(path)) return
+        const ctl = this.midi.paramControl(path)
+        if (ctl) {
+            row.classList.add('vj-midimapped', 'vj-mc' + ctl.color)
+            track.appendChild(el(d, 'span', 'vj-miditag', ctl.label))
+        }
+        if (this.midi.isLearning(path)) track.classList.add('vj-learning')
+        row.oncontextmenu = (e) => {
+            e.preventDefault()
+            const root = this.hostRootFor(row)
+            const a = this.model && this.model.pathIndex.get(path)
+            if (a) this.openItemsMenu(d, root, track, this.midiMenuItems(d, root, track, a))
+        }
     }
 
     // free-text editing of one expression, in place — a small popover with
@@ -2025,7 +2110,7 @@ export default class VJPanel {
         if (this.midi.isLearning(arg.path)) {
             items.push({ label: this.tr('panel.midi-cancel', 'cancel midi learn'), fn: () => this.midi.cancelLearn() })
         } else {
-            items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob)'), fn: () => this.midi.startLearn(arg.path) })
+            items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob / hit a pad)'), fn: () => this.midi.startLearn(arg.path) })
             items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: toggle (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'toggle') })
             items.push({ label: this.tr('panel.midi-learn-push', 'midi button: hold (hit a pad)'), fn: () => this.midi.startLearn(arg.path, 'push') })
         }
@@ -2080,7 +2165,7 @@ export default class VJPanel {
                 this.apply(edits.ghostArg(step, argIdx, fmtNumber(def)), { replaceURL: true })
                 this.midi.startLearn(path, mode, def)
             }
-            items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob)'), fn: () => learn() })
+            items.push({ label: this.tr('panel.midi-learn', 'midi learn (move a knob / hit a pad)'), fn: () => learn() })
             items.push({ label: this.tr('panel.midi-learn-toggle', 'midi button: toggle (hit a pad)'), fn: () => learn('toggle') })
             items.push({ label: this.tr('panel.midi-learn-push', 'midi button: hold (hit a pad)'), fn: () => learn('push') })
         }
@@ -2341,17 +2426,45 @@ export default class VJPanel {
         head.appendChild(unbind)
         wrap.appendChild(head)
 
-        const subRow = (key, label, hint, fmt, ref) => {
+        const subRow = (key, label, hint, fmt, ref, sub) => {
             const row = el(d, 'div', 'vj-bind-row')
             row.appendChild(el(d, 'label', 'vj-label vj-bind-label', label))
             const val = el(d, 'span', 'vj-value', fmt(state[key]))
+            // when the literal exists in the text it has a path — live
+            // streaming + MIDI work like a fader; an implicit scale/offset
+            // (not written out) materializes through rewrite() first
+            const path = sub && sub.path
+            let liveKey = null
             const track = this.makeFader(d, {
                 get: () => state[key],
                 ref,
-                live: (v) => { state[key] = v; val.textContent = fmt(v) },
-                commit: () => rewrite()
+                start: () => {
+                    if (path) liveKey = this.lb.ensure(this.ctx(), path, sub.value)
+                },
+                live: (v) => {
+                    state[key] = v
+                    val.textContent = fmt(v)
+                    if (liveKey) this.lb.set(liveKey, v)
+                },
+                commit: (v) => {
+                    if (liveKey && path && this.lb.isLive(path)) {
+                        this.lb.set(liveKey, parseFloat(fmtNumber(v)))
+                        this.applyQuiet(edits.setNumber(sub, v))
+                    } else {
+                        rewrite()
+                    }
+                    liveKey = null
+                },
+                cancel: (v0) => {
+                    if (liveKey) this.lb.set(liveKey, v0)
+                    liveKey = null
+                }
             })
             track.title = hint
+            if (path) {
+                row.dataset.path = path
+                this.attachMidiRow(d, row, track, path)
+            }
             this.attachValueEdit(d, val, {
                 get: () => state[key],
                 set: (v) => { state[key] = v; val.textContent = fmt(v); rewrite() }
@@ -2362,10 +2475,10 @@ export default class VJPanel {
         }
         wrap.appendChild(subRow('scale', this.tr('panel.audio-scale', 'scale'),
             this.tr('panel.bind-scale-hint', 'range: the 0..1 input is multiplied by this'),
-            (v) => '×' + fmtShort(v), 1))
+            (v) => '×' + fmtShort(v), 1, arg.scale))
         wrap.appendChild(subRow('offset', this.tr('panel.audio-offset', 'offset'),
             this.tr('panel.bind-offset-hint', 'base value, added after scaling'),
-            (v) => (v < 0 ? '' : '+') + fmtShort(v), 0.5))
+            (v) => (v < 0 ? '' : '+') + fmtShort(v), 0.5, arg.offset))
         return wrap
     }
 

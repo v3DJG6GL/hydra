@@ -387,7 +387,8 @@
 /* patched wire: a colored edge marks the row, and a scribble tag naming
    the control (CC21 / D#2) sits in the fader track's right end */
 .vj-param.vj-midimapped,
-.vj-setup-row.vj-midimapped {
+.vj-setup-row.vj-midimapped,
+.vj-bind-row.vj-midimapped {
   box-shadow: inset 2px 0 0 var(--vj-mc, var(--vj-o1));
   border-radius: 2px;
 }
@@ -416,6 +417,34 @@
 .vj-fader.vj-fine .vj-miditag { opacity: 0.2; }
 
 .vj-hush.vj-midimapped { box-shadow: inset 0 -2px 0 var(--vj-mc, var(--vj-o1)); }
+
+/* ⚡ MAP assign mode: every tappable mapping target reads as such */
+.vj-assign [data-path],
+.vj-assign .vj-scene,
+.vj-assign .vj-hush {
+  cursor: crosshair;
+}
+
+/* outline, not box-shadow — the mapped-wire edge keeps its inset shadow */
+.vj-assign .vj-param,
+.vj-assign .vj-setup-row,
+.vj-assign .vj-bind-row {
+  outline: 1px dashed var(--vj-line);
+  outline-offset: -1px;
+  border-radius: 2px;
+}
+
+.vj-assignbtn.vj-on {
+  animation: vj-assign-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes vj-assign-pulse {
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vj-assignbtn.vj-on { animation: none; }
+}
 
 .vj-fader.vj-learning {
   border-color: var(--vj-armed);

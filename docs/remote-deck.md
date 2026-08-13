@@ -236,9 +236,17 @@ right-click does on the desktop lives behind a **long-press** on touch:
 ## MIDI control
 
 Web MIDI needs a secure context: WAN/https decks, or the renderer machine
-itself. Right-click (long-press on touch) the thing you want on hardware:
+itself.
 
-- **Faders** — *midi learn (move a knob)* binds the next CC that changes.
+**⚡ MAP — one tap per mapping.** The fastest way to lay out a whole
+controller: tap ⚡ MAP in the toprail, then tap any value row (or a scene
+pad, or HUSH) and move a knob / hit a pad on the hardware. The mapping
+lands, the mode stays on — tap the next row. ⚡ MAP again (or Esc) exits.
+
+Right-click (long-press on touch) still opens the full menu per row:
+
+- **Faders** — *midi learn (move a knob / hit a pad)* binds whatever the
+  hardware sends first: a CC becomes a knob, a note becomes a toggle pad.
   A learned knob has **no range**: it moves the value exactly like the
   on-screen fader — relative and unbounded, with sensitivity scaled to the
   value's magnitude when you grab the knob (re-grab to recalibrate). If
@@ -246,11 +254,14 @@ itself. Right-click (long-press on touch) the thing you want on hardware:
   *midi range…* in the same menu takes any min/max — including negatives
   and values far beyond the on-screen fader — and *clear range* goes back
   to unlimited.
-- **Buttons work too** — on a fader, *midi button: toggle* mutes/unmutes
-  the param (0 on one hit, the remembered level on the next), *midi
-  button: hold* keeps it on while the pad is held and drops it to 0 on
-  release (release works with real note-offs and with vel-0 note-ons,
-  both conventions).
+- **Buttons** — *midi button: toggle* mutes/unmutes the param (0 on one
+  hit, the remembered level on the next), *midi button: hold* keeps it on
+  while the pad is held and drops it to 0 on release (release works with
+  real note-offs and with vel-0 note-ons, both conventions).
+- **Numbers inside expressions too** — the scale/offset rows of an audio
+  or mouse binding and the mini-faders on any `() => …` formula (or a
+  constant like `Math.PI/4`) learn the same way; the hardware drives them
+  live without recompiling.
 - **Scene pads** — *midi learn* on a scene slot recalls it on a pad hit.
 - **HUSH** — right-click it and hit a pad: panic button on hardware.
 

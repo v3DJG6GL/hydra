@@ -43,6 +43,37 @@ function assignPaths(statements) {
                     index.set(v.path, v)
                 })
             }
+            // the scale/offset literals of a () => a.fft[0] * s + o widget
+            // are addressable (and MIDI-drivable: the arrow re-reads its
+            // uniform every frame, see LiveBind)
+            if (arg.kind === 'audioBind' || arg.kind === 'mouseBind') {
+                for (const k of ['scale', 'offset']) {
+                    if (arg[k]) {
+                        arg[k].path = `${arg.path}.${k}`
+                        index.set(arg[k].path, arg[k])
+                    }
+                }
+            }
+            // numbers inside a free-form expression: each becomes a small
+            // addressable arg of its own (matching the panel's mini-faders).
+            // Non-function expressions carry fnWrap — the shadow eval must
+            // wrap them in an arrow to make the substituted uniform live.
+            // Arrays are excluded: wrapping would defeat hydra's sequencing.
+            if (arg.kind === 'expr' && !(arg.tags || []).includes('array')) {
+                const fn = (arg.tags || []).includes('fn')
+                arg.lits = exprLiterals(arg.text).map((l, li) => {
+                    const lit = {
+                        kind: 'number',
+                        value: l.value,
+                        range: [arg.range[0] + l.start, arg.range[0] + l.start + l.len],
+                        inExpr: true,
+                        fnWrap: fn ? null : arg.range,
+                        path: `${arg.path}.l${li}`
+                    }
+                    index.set(lit.path, lit)
+                    return lit
+                })
+            }
         })
     }
     statements.forEach((stmt, si) => {
@@ -268,6 +299,33 @@ function classifyArg(a, text, transforms, comments) {
     return { kind: 'expr', text: slice, range: [a.start, a.end], tags: detectTags(slice, a) }
 }
 
+// numeric literals inside an expression's text, with the char offsets to
+// splice them back. Identifier tails (x2), property names and array indices
+// (a.fft[0]) are skipped; a unary minus is folded into the literal so a
+// drag can cross zero. Shared with the panel's expression mini-faders so
+// the lit paths assigned above line up 1:1 with the rendered rows.
+export function exprLiterals(text) {
+    const out = []
+    const re = /\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi
+    let m
+    while ((m = re.exec(text))) {
+        const before = text.slice(0, m.index)
+        const after = text.slice(m.index + m[0].length)
+        if (/[\w$.]$/.test(before)) continue
+        if (/^\s*\]/.test(after)) continue
+        let start = m.index
+        const sign = /-\s*$/.exec(before)
+        if (sign) {
+            const prev = before.slice(0, sign.index).trimEnd().slice(-1)
+            if (!prev || '(,*+-/%=<>&|?:'.includes(prev)) start = sign.index
+        }
+        const str = text.slice(start, m.index + m[0].length).replace(/\s+/g, '')
+        const value = parseFloat(str)
+        if (isFinite(value)) out.push({ start, len: m.index + m[0].length - start, value })
+    }
+    return out
+}
+
 function numLeaf(node) {
     if (node.type === 'Literal' && typeof node.value === 'number') {
         return { value: node.value, range: [node.start, node.end] }
@@ -333,13 +391,13 @@ function classifyAudioBind(a) {
     if (body.type === 'BinaryExpression' && body.operator === '+') {
         const leaf = numLeaf(body.right)
         if (!leaf) return null
-        offset = { kind: 'number', value: leaf.value, range: leaf.range, noLive: true }
+        offset = { kind: 'number', value: leaf.value, range: leaf.range, inExpr: true }
         body = body.left
     }
     if (body.type === 'BinaryExpression' && body.operator === '*') {
         const leaf = numLeaf(body.right)
         if (!leaf) return null
-        scale = { kind: 'number', value: leaf.value, range: leaf.range, noLive: true }
+        scale = { kind: 'number', value: leaf.value, range: leaf.range, inExpr: true }
         body = body.left
     }
     // a.fft[<int literal>]
@@ -372,13 +430,13 @@ function classifyMouseBind(a) {
     if (body.type === 'BinaryExpression' && body.operator === '+') {
         const leaf = numLeaf(body.right)
         if (!leaf) return null
-        offset = { kind: 'number', value: leaf.value, range: leaf.range, noLive: true }
+        offset = { kind: 'number', value: leaf.value, range: leaf.range, inExpr: true }
         body = body.left
     }
     if (body.type === 'BinaryExpression' && body.operator === '*') {
         const leaf = numLeaf(body.right)
         if (!leaf) return null
-        scale = { kind: 'number', value: leaf.value, range: leaf.range, noLive: true }
+        scale = { kind: 'number', value: leaf.value, range: leaf.range, inExpr: true }
         body = body.left
     }
     let norm = false // divided by the canvas dimension -> 0..1
