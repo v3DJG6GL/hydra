@@ -1165,7 +1165,43 @@ export default class VJPanel {
     // wipe the question mid-decision; renderInto re-attaches it. `learn`
     // carries the interrupted learn so "keep it" can re-arm it.
     confirmReassign(ctl, ownerDesc, onYes, learn) {
-        this._confirm = { ctl, ownerDesc, onYes, learn }
+        const decline = () => {
+            if (learn) {
+                this.midi.rearm(learn.l, learn.ctl)
+                if (this.host && this.host._fire) {
+                    this.host._fire('toast', this.tr('panel.reassign-kept',
+                        'kept — still armed: touch a free control (esc cancels)'), 'info')
+                }
+            }
+            this.renderAll()
+        }
+        this._openConfirm({
+            ctl,
+            ownerDesc,
+            msg: this.tr('panel.reassign-msg', 'already controls'),
+            yes: { label: this.tr('panel.reassign-yes', 'reassign'), fn: onYes },
+            no: { label: this.tr('panel.reassign-no', 'keep it'), fn: decline },
+            focus: 'no', // the safe choice answers a stray Enter
+            dismiss: decline
+        })
+    }
+
+    // the ⚡ of a row that is ALREADY mapped: don't silently re-arm — ask
+    // whether to learn a different control or drop the mapping
+    confirmMapped(path, ctl) {
+        this._openConfirm({
+            ctl,
+            ownerDesc: this.midi._pathDesc(path),
+            msg: this.tr('panel.mapped-msg', 'drives'),
+            yes: { label: this.tr('panel.mapped-remap', 're-map'), fn: () => this.midi.startLearn(path) },
+            no: { label: this.tr('panel.mapped-unmap', 'unmap'), fn: () => this.midi.unlearn(path) },
+            focus: 'yes', // re-map pre-selected; unmap stays a deliberate step
+            dismiss: null // esc / backdrop = leave the mapping untouched
+        })
+    }
+
+    _openConfirm(c) {
+        this._confirm = c
         // mounted directly: renderAll() defers whole rebuilds while the
         // question is open (so a MIDI-stream rebuild can't swap the buttons
         // out mid-click) — which also means it can never mount the dialog
@@ -1179,46 +1215,41 @@ export default class VJPanel {
         this._eachRoot((root) => root.querySelectorAll('.vj-confirm').forEach((n) => n.remove()))
     }
 
-    // declining keeps the old mapping AND keeps the learn armed (ignoring
-    // the declined control, whose burst is still streaming) — so a mapping
-    // pass just moves on to a free knob instead of falling out of the flow
+    // Esc / backdrop click: run the question's dismiss action (reassign
+    // re-arms the interrupted learn so a mapping pass moves on to a free
+    // knob; the unmap question just closes)
     _closeConfirm(declined) {
         const c = this._confirm
         this._confirm = null
         this._unmountConfirm()
-        if (declined && c && c.learn) {
-            this.midi.rearm(c.learn.l, c.learn.ctl)
-            if (this.host && this.host._fire) {
-                this.host._fire('toast', this.tr('panel.reassign-kept',
-                    'kept — still armed: touch a free control (esc cancels)'), 'info')
-            }
-        }
-        this.renderAll()
+        if (declined && c && c.dismiss) c.dismiss()
+        else this.renderAll()
     }
 
     _renderConfirm(d) {
         const c = this._confirm
+        const pick = (fn) => () => {
+            this._confirm = null
+            this._unmountConfirm()
+            fn() // persists + re-renders
+        }
         const wrap = el(d, 'div', 'vj-confirm')
         const box = el(d, 'div', 'vj-confirm-box vj-mc' + (c.ctl.color || 0))
         const msg = el(d, 'div', 'vj-confirm-msg')
         msg.appendChild(el(d, 'span', 'vj-confirm-ctl', c.ctl.label))
-        msg.appendChild(d.createTextNode(' ' + this.tr('panel.reassign-msg', 'already controls') + ' '))
+        msg.appendChild(d.createTextNode(' ' + c.msg + ' '))
         msg.appendChild(el(d, 'span', 'vj-confirm-owner', c.ownerDesc))
         box.appendChild(msg)
         const btns = el(d, 'div', 'vj-confirm-btns')
-        const yes = el(d, 'button', 'vj-confirm-btn vj-confirm-yes', this.tr('panel.reassign-yes', 'reassign'))
-        yes.onclick = () => {
-            this._confirm = null
-            this._unmountConfirm()
-            c.onYes() // persists + re-renders
-        }
-        const no = el(d, 'button', 'vj-confirm-btn', this.tr('panel.reassign-no', 'keep it'))
-        no.onclick = () => this._closeConfirm(true)
+        const yes = el(d, 'button', 'vj-confirm-btn vj-confirm-yes', c.yes.label)
+        yes.onclick = pick(c.yes.fn)
+        const no = el(d, 'button', 'vj-confirm-btn', c.no.label)
+        no.onclick = pick(c.no.fn)
         wrap.onclick = (e) => {
             if (e.target === wrap) this._closeConfirm(true)
         }
         // ←/→ hop between the buttons, Enter fires the focused one
-        // (native), Esc keeps the existing mapping
+        // (native), Esc dismisses without touching anything
         box.onkeydown = (e) => {
             if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
                 e.preventDefault()
@@ -1233,7 +1264,8 @@ export default class VJPanel {
         btns.appendChild(no)
         box.appendChild(btns)
         wrap.appendChild(box)
-        setTimeout(() => { try { yes.focus() } catch (e) { /* detached */ } }, 0)
+        const first = c.focus === 'no' ? no : yes
+        setTimeout(() => { try { first.focus() } catch (e) { /* detached */ } }, 0)
         return wrap
     }
 
@@ -1361,8 +1393,12 @@ export default class VJPanel {
                 btn.title = this.tr('panel.rowmap', 'midi learn — tap, then move a knob / hit a pad')
                 btn.onclick = (e) => {
                     e.stopPropagation()
-                    if (this.midi.isLearning(path)) this.midi.cancelLearn()
-                    else this.midi.startLearn(path)
+                    if (this.midi.isLearning(path)) return this.midi.cancelLearn()
+                    // already mapped: ask re-map / unmap instead of silently
+                    // arming a learn over the existing assignment
+                    const ctl = this.midi.paramControl(path)
+                    if (ctl) return this.confirmMapped(path, ctl)
+                    this.midi.startLearn(path)
                 }
                 row.appendChild(btn)
             })
@@ -2934,6 +2970,12 @@ export default class VJPanel {
         })
         sel.onchange = () => this.apply({ from: stmt.argRange[0], to: stmt.argRange[1], text: sel.value })
         rowEl.appendChild(sel)
+        rowEl.appendChild(el(d, 'div', 'vj-spacer'))
+        const rm = el(d, 'button', 'vj-source-remove')
+        rm.appendChild(el(d, 'i', 'fas fa-times'))
+        rm.title = this.tr('panel.remove-render', 'remove this line (back to rendering o0)')
+        rm.onclick = () => this.apply(edits.removeStatement(stmt, this.model.text))
+        rowEl.appendChild(rm)
         return rowEl
     }
 
@@ -3014,6 +3056,12 @@ export default class VJPanel {
         })
         rowEl.appendChild(track)
         rowEl.appendChild(valueEl)
+        rowEl.appendChild(el(d, 'div', 'vj-spacer'))
+        const rm = el(d, 'button', 'vj-source-remove')
+        rm.appendChild(el(d, 'i', 'fas fa-times'))
+        rm.title = this.tr('panel.remove-global', 'remove this setting (keeps its current value until reload)')
+        rm.onclick = () => this.apply(edits.removeStatement(stmt, this.model.text))
+        rowEl.appendChild(rm)
         return rowEl
     }
 
@@ -3032,6 +3080,17 @@ export default class VJPanel {
                 ? this.renderAudioBind(d, input, bind.arg, { stmt, bind })
                 : this.renderMouseBind(d, input, bind.arg, { stmt, bind })
             rowEl.appendChild(box)
+            // right-click on the row (label / edges) mirrors the box's ✕;
+            // the scale/offset sub-rows keep their own MIDI menus
+            rowEl.oncontextmenu = (e) => {
+                if (e.target.closest && e.target.closest('[data-path]')) return
+                e.preventDefault()
+                this.openItemsMenu(d, this.hostRootFor(rowEl), rowEl, [{
+                    label: this.tr('panel.unbind-global', 'unbind — back to a plain value'),
+                    fn: () => this.unbindGlobal(stmt, bind),
+                    danger: true
+                }])
+            }
             wrap.appendChild(rowEl)
         })
         return wrap

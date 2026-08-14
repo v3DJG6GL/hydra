@@ -237,9 +237,10 @@ right-click does on the desktop lives behind a **long-press** on touch:
 
 The grey rows above the chains — `speed`, `bpm`, `fps`, the `a.set…`
 audio-response settings and the `render(oN)` pick — are regular deck
-rows: faders with a right-click/long-press menu. Any of them the sketch
-doesn't have yet can be added from **+ setting** at the bottom of the
-deck, next to *new chain* and *source*.
+rows: faders with a right-click/long-press menu and a ✕ to remove the
+line again. Any of them the sketch doesn't have yet can be added from
+**+ setting** at the bottom of the deck, next to *new chain* and
+*source*.
 
 **Binding a global to audio or mouse**: right-click/long-press the
 speed / bpm / fps fader → *bind to audio (fft)* or *bind to mouse*. The
@@ -256,8 +257,9 @@ The row turns into the familiar bind box (fft-bin / axis picker, scale
 and offset faders, all MIDI-learnable). All bound globals share one
 `update` block; it lives in the sketch text, so it travels with scenes,
 URLs and remote decks and keeps working without the deck entirely. The
-✕ on the box dissolves the binding back into a plain `speed = N` row,
-frozen at the value the global carried at that moment.
+✕ on the box — or right-click/long-press on the row → *unbind* —
+dissolves the binding back into a plain `speed = N` row, frozen at the
+value the global carried at that moment.
 
 ## MIDI control
 
@@ -273,7 +275,10 @@ channel strips, Enter arms the focused row.
 
 **Per-row ⚡.** Every value row also carries its own small ⚡ at the end
 of the row (ghost-quiet until hovered): one tap arms the learn for
-exactly that row — no menu, no assign mode. Tap it again to cancel.
+exactly that row — no menu, no assign mode. Tap it again to cancel. On a
+row that is **already mapped**, the tap asks *re-map / unmap* instead of
+silently re-arming (same dialog frame as the reassign question; ←/→ and
+Enter work, *re-map* is pre-selected, Esc leaves the mapping alone).
 
 Right-click (long-press on touch) still opens the full menu per row:
 
