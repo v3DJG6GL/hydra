@@ -57,7 +57,7 @@
 </style>
 </head>
 <body>
-<h1>HYDRA VJ · MIDI DEBUG <span class="v">v1 · 2026-08-13</span></h1>
+<h1>HYDRA VJ · MIDI DEBUG <span class="v">v2 · 2026-08-14</span></h1>
 <p class="sub">Hardware LED probe console for the Launch Control XL 3. Run it on the same machine the
 controller is plugged into, over https with a hostname (Firefox refuses Web MIDI on plain http or bare-IP origins).
 Answer each probe by looking at the hardware, then copy the report at the bottom and paste it back.</p>
@@ -243,6 +243,9 @@ const PROBES = [
     },
     {
         id: 'P2', title: 'Re-select your custom mode + touch events on',
+        warn: 'verdict 2026-08: WEDGES the device — after the B6 1E re-select, LED writes stop ' +
+            'painting and DAW mode refuses re-entry until the XL3 is power-cycled. SKIP this probe ' +
+            'unless re-testing that exact quirk. The deck driver stays on the Mixer surface instead.',
         q: 'Is the surface back on your custom mode, LEDs showing their usual colours?',
         run: async () => {
             send(dawOut(), [0xb6, 0x1e, +custSel.value])
@@ -298,6 +301,7 @@ PROBES.forEach((p) => {
     card.innerHTML = `<div class="head"><span class="num">${p.id}</span> <b>${p.title}</b>` +
         `${p.decisive ? ' <span class="watch">← the decisive one</span>' : ''}` +
         `<span class="state">unanswered</span></div>` +
+        `${p.warn ? `<div class="q" style="color:var(--warn)">⚠ ${p.warn}</div>` : ''}` +
         `<div class="q">${p.q}</div>` +
         `<div class="row"><button class="run">RUN</button>` +
         `<button class="yes" disabled>YES</button><button class="no" disabled>NO</button></div>`
@@ -339,7 +343,7 @@ $('copy').onclick = async () => {
 badge('b-secure', window.isSecureContext, window.isSecureContext ? 'secure context' : 'NOT a secure context — Web MIDI blocked')
 badge('b-sysex', false, 'sysex: not connected yet')
 badge('b-daw', false, 'XL3 DAW port: not connected yet')
-rep('hydra midi-debug v1 loaded — hit CONNECT MIDI')
+rep('hydra midi-debug v2 loaded — hit CONNECT MIDI')
 </script>
 </body>
 </html>

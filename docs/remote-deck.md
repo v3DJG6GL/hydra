@@ -320,15 +320,21 @@ LED echoes there read as a DAW connecting and can flip the device into
 a DAW protocol mode.
 
 **Novation Launch Control XL 3** gets a native LED driver instead of
-echoes: the deck speaks the documented DAW-port protocol (enters DAW
-mode, immediately re-selects your custom mode, and colours physical
-controls directly), so each mapped encoder or fader lights **in the
-same palette colour as its tag on the deck**. The deck learns which
-physical control carries a CC through the XL3's touch events — with
-LEDs enabled, simply grab each mapped knob/fader once and its LED takes
-its colour. Turning the option off (or closing the deck) exits DAW mode
-and hands the LEDs back to the device. The two 16-button rows send no
-touch events, so their LEDs stay device-driven.
+echoes: the deck enters DAW mode over the DAW port and colours physical
+controls directly, so each mapped encoder or fader lights **in the same
+palette colour as its tag on the deck** on an otherwise dark board.
+While LEDs are enabled the device's screen shows the DAW *Mixer* label —
+that's expected, and your custom mode keeps sending its CCs the whole
+time, so nothing changes on the deck side. (Hardware probing showed the
+documented "re-select the custom mode inside DAW mode" step actually
+kills LED painting and wedges DAW-mode re-entry until a power cycle, so
+the driver deliberately stays on the Mixer surface.) The deck learns
+which physical control carries a CC through the XL3's touch events —
+with LEDs enabled, simply grab each mapped knob/fader once and its LED
+takes its colour. Turning the option off (or closing the deck) exits
+DAW mode, which repaints your custom mode and hands the LEDs back. The
+two 16-button rows send no touch events, so their LEDs stay
+device-driven.
 
 **MIDI hardware debugging**: the deck ships a standalone probe console
 at `/midi-debug.html` (same origin as the deck). It lists ports, live-

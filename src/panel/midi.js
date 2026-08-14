@@ -204,17 +204,25 @@ export default class MidiControl {
 
     // ---- Launch Control XL 3 LED driver (over its DAW port) --------------
     // In standalone custom modes the XL3 drives its own LEDs and ignores
-    // echoes on the MIDI port. The documented road (programmer's reference):
-    // enter DAW mode on the DAW port (9F 0C 7F) — which kicks the surface to
-    // DAW Mixer, so the user's custom mode is immediately re-selected via
-    // surface-mode select (B6 1E, custom modes 1-4 = 6-9, 5-16 = 18-29) —
-    // then colour any physical control with B0 <index> <palette colour>
-    // (encoders 13-36, faders 5-12, button rows 37-52). WHICH physical
-    // control carries a learned CC is discovered through touch events
-    // (B6 47 7F enables; touching sends BE <index> 7F on the DAW port):
-    // grabbing a mapped knob while its custom CC streams ties the two
-    // together (m.pi), persisted with the mapping. Exiting DAW mode
-    // (9F 0C 00) hands the LEDs back to the device.
+    // echoes on the MIDI port. The road that works on real firmware
+    // (midi-debug probe report, 2026-08): enter DAW mode on the DAW port
+    // (9F 0C 7F) — the surface swaps to DAW Mixer with every pot/button
+    // LED dark — then colour any physical control with B0 <index>
+    // <palette colour> (encoders 13-36, faders 5-12, button rows 37-52).
+    // The custom mode keeps streaming its CCs on the MIDI port the whole
+    // time, so the deck stays fully controllable. WHICH physical control
+    // carries a learned CC is discovered through touch events (B6 47 7F
+    // enables; touching sends BE <index> 7F on the DAW port): grabbing a
+    // mapped knob while its custom CC streams ties the two together
+    // (m.pi), persisted with the mapping. Exiting DAW mode (9F 0C 00)
+    // hands the LEDs back to the device and repaints the custom mode.
+    //
+    // NEVER re-select the custom mode over the DAW port (B6 1E) while the
+    // DAW-mode note-on is latched — the programmer's-reference road. On
+    // real hardware it half-exits DAW mode: LED writes stop painting and
+    // 9F 0C 7F is refused until the device is power-cycled (probe P2 vs
+    // the P2-skipped run). The Mixer label on the device's screen is the
+    // price of working LEDs.
 
     _xl3DawOuts() {
         const outs = []
@@ -226,19 +234,17 @@ export default class MidiControl {
     }
 
     _xl3State() {
-        if (!this._xl3) this._xl3 = { on: false, mode: 6, touch: null, lit: new Map() }
+        if (!this._xl3) this._xl3 = { on: false, touch: null, lit: new Map() }
         return this._xl3
     }
 
-    // DAW-port traffic: surface-mode reports and touch events. Kept away
+    // DAW-port traffic: touch events (surface-mode reports arrive here too
+    // but are deliberately ignored — see the driver note above). Kept away
     // from onMessage so DAW-mode ACKs (note-ons on ch 16) can't complete a
     // pad learn or drive a mapping.
     _onXl3Daw(data) {
         const [status, d1, d2] = data
         const x = this._xl3State()
-        // B6 1E <mode>: surface-mode report — remember the user's custom
-        // mode (6+); 1/2 are the DAW surfaces we never want to strand
-        if (status === 0xb6 && d1 === 0x1e && d2 >= 6) x.mode = d2
         // BE <index> <127|0>: encoder/fader touch on channel 15
         if (status === 0xbe && d2 > 0) x.touch = { idx: d1, t: Date.now() }
     }
@@ -265,15 +271,9 @@ export default class MidiControl {
             this._xl3Bye = true
             window.addEventListener('pagehide', () => this._xl3Exit())
         }
-        send([0x9f, 0x0c, 0x7f]) // enter DAW mode (surface jumps to DAW Mixer)
-        await pause(150)
-        send([0xb7, 0x1e, 0x00]) // query surface mode (reply updates x.mode)
-        await pause(150)
-        send([0xb6, 0x1e, this._xl3State().mode]) // put the custom mode back
+        send([0x9f, 0x0c, 0x7f]) // enter DAW mode (surface swaps to DAW Mixer, LEDs dark)
         send([0xb6, 0x47, 0x7f]) // touch events on
-        // the device repaints the custom mode's own LED state after the
-        // re-select — colours sent before that repaint get clobbered
-        await pause(1200)
+        await pause(500) // let the surface swap settle before painting
         this._xl3Sync(true)
         setTimeout(() => this._xl3Sync(true), 2500) // beat any late redraw
     }
