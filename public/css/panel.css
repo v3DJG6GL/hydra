@@ -668,7 +668,8 @@
   min-height: 14px;
 }
 
-.vj-bind-label { width: 44px; font-size: 8px; }
+/* bind boxes only ever print SCALE / OFFSET — a slim column keeps them
+   compact (declared with > below the base .vj-label rule so it wins) */
 
 .vj-bind .vj-fader { min-width: 40px; height: 12px; }
 .vj-bind .vj-value { flex: 0 1 auto; min-width: 34px; max-width: 64px; }
@@ -788,7 +789,9 @@
   border-top: 3px solid var(--vj-dim);
   border-radius: 3px;
   min-width: 148px;
-  max-width: 250px;
+  /* wide enough that the fader keeps real travel next to the full-width
+     silkscreen column */
+  max-width: 268px;
   flex: none;
 }
 
@@ -861,12 +864,22 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--vj-dim);
-  width: 64px;
+  /* silkscreen never truncates: sized to the longest hydra input name
+     (FREQUENCY / SMOOTHING / THRESHOLD ≈ 9 caps at this size+tracking);
+     the fixed width keeps every fader column aligned within a module */
+  width: 78px;
   flex: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* setup rows print longer names (AUDIO CUTOFF) and have the whole deck
+   width to spend — one wider column keeps the stack's faders aligned */
+.vj-setup-row > .vj-label { width: 96px; }
+
+/* the bind box's own sub-column: SCALE / OFFSET at most */
+.vj-bind-row > .vj-label { width: 48px; }
 
 .vj-value {
   font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
@@ -1020,7 +1033,8 @@
 }
 .vj-subchain .vj-chips::before { top: 15px; }
 .vj-subchain .vj-chip { min-width: 120px; }
-.vj-subchain .vj-label { width: 34px; }
+/* nested modules print the same vocabulary as top-level ones — same
+   column, no truncation; the subchain simply grows with its content */
 .vj-subchain .vj-pp { width: 18px; height: 18px; margin-top: 6px; }
 
 /* ---------- expression chips / raw rows ---------- */
