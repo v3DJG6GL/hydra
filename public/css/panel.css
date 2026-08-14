@@ -1106,6 +1106,11 @@
 
 .vj-setup-row .vj-fader { max-width: 160px; }
 
+/* a global bound through the update hook: the row holds a full bind box,
+   so top-align the label with the box's head row */
+.vj-updatebind-row { align-items: flex-start; }
+.vj-updatebind-row > .vj-label { padding-top: 8px; }
+
 /* ---------- selects ---------- */
 
 .vj-refselect {

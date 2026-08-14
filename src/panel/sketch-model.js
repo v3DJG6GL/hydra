@@ -80,6 +80,19 @@ function assignPaths(statements) {
         if (stmt.kind === 'chain') {
             walkStep(stmt.source, `s${si}.src(${stmt.source.name})`)
             stmt.transforms.forEach((st, ti) => walkStep(st, `s${si}.t${ti}(${st.name})`))
+        } else if (stmt.kind === 'setup' && stmt.sub === 'update') {
+            // name-keyed (not index-keyed) so a mapping on speed's scale
+            // survives another global joining or leaving the block
+            stmt.binds.forEach((b) => {
+                b.arg.path = `s${si}.up.${b.name}`
+                index.set(b.arg.path, b.arg)
+                for (const k of ['scale', 'offset']) {
+                    if (b.arg[k]) {
+                        b.arg[k].path = `${b.arg.path}.${k}`
+                        index.set(b.arg[k].path, b.arg[k])
+                    }
+                }
+            })
         } else if (stmt.kind === 'setup' && stmt.arg) {
             stmt.arg.path = `s${si}.${stmt.sub}`
             index.set(stmt.arg.path, stmt.arg)
@@ -130,12 +143,24 @@ function classifyStatement(node, text, transforms, index, comments) {
             const chain = buildChain(links, text, transforms, false, comments)
             if (chain) return { ...base, kind: 'chain', ...chain }
         }
-        // speed = 0.8 / bpm = 120
-        if (expr.type === 'AssignmentExpression' && expr.operator === '=' &&
-            expr.left.type === 'Identifier' && (expr.left.name === 'speed' || expr.left.name === 'bpm')) {
-            const arg = classifyArg(expr.right, text, transforms)
-            if (arg.kind === 'number') {
-                return { ...base, kind: 'setup', sub: expr.left.name, arg }
+        if (expr.type === 'AssignmentExpression' && expr.operator === '=' && expr.left.type === 'Identifier') {
+            // speed = 0.8 / bpm = 120 / fps = 30
+            if (BIND_GLOBALS.includes(expr.left.name)) {
+                const arg = classifyArg(expr.right, text, transforms)
+                if (arg.kind === 'number') {
+                    return { ...base, kind: 'setup', sub: expr.left.name, arg }
+                }
+            }
+            // update = () => { speed = a.fft[0] * 2 … } — hydra runs the update
+            // hook once per frame, which is the only way a GLOBAL can follow
+            // audio or mouse (the synth copies speed/bpm/fps over as plain
+            // numbers every tick, so an arrow in their place breaks the clock)
+            if (expr.left.name === 'update' && expr.right.type === 'ArrowFunctionExpression' &&
+                expr.right.body.type === 'BlockStatement') {
+                const binds = classifyUpdateBinds(expr.right.body)
+                if (binds) {
+                    return { ...base, kind: 'setup', sub: 'update', binds, bodyInnerEnd: expr.right.body.end - 1 }
+                }
             }
         }
     }
@@ -382,10 +407,10 @@ function classifyArraySeq(a) {
     }
 }
 
-// () => a.fft[n] [* scale] [+ offset] -> audio-reactive binding widget
-function classifyAudioBind(a) {
-    if (a.type !== 'ArrowFunctionExpression' || a.body.type === 'BlockStatement') return null
-    let body = a.body
+// the trailing [* scale] [+ offset] of a binding expression; null when a
+// present factor isn't a plain numeric leaf (then it's not a widget shape)
+function peelScaleOffset(node) {
+    let body = node
     let offset = null
     let scale = null
     if (body.type === 'BinaryExpression' && body.operator === '+') {
@@ -400,6 +425,15 @@ function classifyAudioBind(a) {
         scale = { kind: 'number', value: leaf.value, range: leaf.range, inExpr: true }
         body = body.left
     }
+    return { body, scale, offset }
+}
+
+// a.fft[n] [* scale] [+ offset] — the bare expression shape, shared by the
+// arrow-arg widget and the update-hook global bindings
+function audioBindShape(node) {
+    const peeled = peelScaleOffset(node)
+    if (!peeled) return null
+    const { body, scale, offset } = peeled
     // a.fft[<int literal>]
     if (body.type !== 'MemberExpression' || !body.computed) return null
     const bin = body.property && body.property.type === 'Literal' && typeof body.property.value === 'number'
@@ -409,36 +443,14 @@ function classifyAudioBind(a) {
         obj.object.type === 'Identifier' && obj.object.name === 'a' &&
         obj.property.type === 'Identifier' && obj.property.name === 'fft'
     if (!bin || !isFft) return null
-    return {
-        kind: 'audioBind',
-        range: [a.start, a.end],
-        bin: bin.value,
-        binRange: [bin.start, bin.end],
-        scale,
-        offset,
-        tags: ['audio'],
-        noLive: true
-    }
+    return { bin: bin.value, binRange: [bin.start, bin.end], scale, offset }
 }
 
-// () => mouse.x [/ width] [* scale] [+ offset] -> mouse-reactive binding widget
-function classifyMouseBind(a) {
-    if (a.type !== 'ArrowFunctionExpression' || a.body.type === 'BlockStatement') return null
-    let body = a.body
-    let offset = null
-    let scale = null
-    if (body.type === 'BinaryExpression' && body.operator === '+') {
-        const leaf = numLeaf(body.right)
-        if (!leaf) return null
-        offset = { kind: 'number', value: leaf.value, range: leaf.range, inExpr: true }
-        body = body.left
-    }
-    if (body.type === 'BinaryExpression' && body.operator === '*') {
-        const leaf = numLeaf(body.right)
-        if (!leaf) return null
-        scale = { kind: 'number', value: leaf.value, range: leaf.range, inExpr: true }
-        body = body.left
-    }
+// mouse.x [/ width] [* scale] [+ offset] — the bare expression shape
+function mouseBindShape(node) {
+    const peeled = peelScaleOffset(node)
+    if (!peeled) return null
+    let { body } = peeled
     let norm = false // divided by the canvas dimension -> 0..1
     if (body.type === 'BinaryExpression' && body.operator === '/' &&
         body.right.type === 'Identifier' && (body.right.name === 'width' || body.right.name === 'height')) {
@@ -448,16 +460,55 @@ function classifyMouseBind(a) {
     if (body.type !== 'MemberExpression' || body.computed) return null
     if (!(body.object.type === 'Identifier' && body.object.name === 'mouse')) return null
     if (!(body.property.type === 'Identifier' && (body.property.name === 'x' || body.property.name === 'y'))) return null
-    return {
-        kind: 'mouseBind',
-        range: [a.start, a.end],
-        axis: body.property.name,
-        norm,
-        scale,
-        offset,
-        tags: ['mouse'],
-        noLive: true
+    return { axis: body.property.name, norm, scale: peeled.scale, offset: peeled.offset }
+}
+
+// () => a.fft[n] [* scale] [+ offset] -> audio-reactive binding widget
+function classifyAudioBind(a) {
+    if (a.type !== 'ArrowFunctionExpression' || a.body.type === 'BlockStatement') return null
+    const shape = audioBindShape(a.body)
+    if (!shape) return null
+    return { kind: 'audioBind', range: [a.start, a.end], ...shape, tags: ['audio'], noLive: true }
+}
+
+// () => mouse.x [/ width] [* scale] [+ offset] -> mouse-reactive binding widget
+function classifyMouseBind(a) {
+    if (a.type !== 'ArrowFunctionExpression' || a.body.type === 'BlockStatement') return null
+    const shape = mouseBindShape(a.body)
+    if (!shape) return null
+    return { kind: 'mouseBind', range: [a.start, a.end], ...shape, tags: ['mouse'], noLive: true }
+}
+
+// the synth globals a setup row can hold; also the only names allowed on the
+// left of an update-hook binding
+export const BIND_GLOBALS = ['speed', 'bpm', 'fps']
+
+// every statement of the update body must be `<global> = <audio|mouse shape>`
+// for the block to decompose into bound setup rows; anything else stays raw
+function classifyUpdateBinds(block) {
+    const binds = []
+    for (const s of block.body) {
+        if (s.type !== 'ExpressionStatement') return null
+        const e = s.expression
+        if (e.type !== 'AssignmentExpression' || e.operator !== '=' ||
+            e.left.type !== 'Identifier' || !BIND_GLOBALS.includes(e.left.name)) return null
+        const audio = audioBindShape(e.right)
+        const mouse = audio ? null : mouseBindShape(e.right)
+        if (!audio && !mouse) return null
+        binds.push({
+            name: e.left.name,
+            stmtRange: [s.start, s.end],
+            arg: {
+                kind: audio ? 'audioBind' : 'mouseBind',
+                bare: true,
+                range: [e.right.start, e.right.end],
+                ...(audio || mouse),
+                tags: [audio ? 'audio' : 'mouse'],
+                noLive: true
+            }
+        })
     }
+    return binds.length ? binds : null
 }
 
 function detectTags(slice, node) {

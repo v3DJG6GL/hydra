@@ -18,6 +18,13 @@ const CHANNEL_CLASS = { o0: 'ch-o0', o1: 'ch-o1', o2: 'ch-o2', o3: 'ch-o3' }
 const TAG_ICONS = { fn: 'ƒ', array: '[ ]', time: '◷', mouse: '☩', audio: '∿', math: 'π' }
 const SOURCE_FNS = { initCam: 'camera', initScreen: 'screen', initVideo: 'video', initImage: 'image' }
 
+// top-level synth globals editable as setup rows; def doubles as the insert
+// value and the unbind fallback, ref anchors the fader mid-track
+const GLOBAL_SETTINGS = {
+    speed: { def: 1, ref: 1 },
+    bpm: { def: 30, ref: 30 },
+    fps: { def: 30, ref: 30 }
+}
 // a.setX(n) audio settings; def doubles as the insert value and the fader's mid-track anchor
 const AUDIO_SETTINGS = {
     setSmooth: { label: 'smooth', def: 0.4 },
@@ -1273,9 +1280,9 @@ export default class VJPanel {
         const body = el(d, 'div', 'vj-body')
         const model = this.model
         if (model && model.statements.length > 0) {
-            if (!model.statements.some((s) => s.kind === 'setup' && s.sub === 'speed')) {
-                body.appendChild(this.renderGhostSpeedRow(d))
-            }
+            const hasSpeed = model.statements.some((s) => s.kind === 'setup' &&
+                (s.sub === 'speed' || (s.sub === 'update' && s.binds.some((b) => b.name === 'speed'))))
+            if (!hasSpeed) body.appendChild(this.renderGhostSpeedRow(d))
             model.statements.forEach((stmt) => body.appendChild(this.renderStatement(d, root, stmt)))
         } else {
             const empty = el(d, 'div', 'vj-empty', this.tr('panel.empty', 'no signal'))
@@ -1299,6 +1306,15 @@ export default class VJPanel {
             addSrc.title = this.tr('panel.add-source-hint', 'add an external source (camera / screen / video / image)')
             addSrc.onclick = () => this.apply({ from: 0, to: 0, text: `${freeSlot}.initCam(0)\n` })
             addRow.appendChild(addSrc)
+        }
+        const settingItems = this.addSettingItems()
+        if (settingItems.length) {
+            const addSet = el(d, 'button', 'vj-newchain')
+            addSet.appendChild(el(d, 'span', 'vj-pp-dot'))
+            addSet.appendChild(el(d, 'span', null, ' ' + this.tr('panel.add-setting', 'setting')))
+            addSet.title = this.tr('panel.add-setting-hint', 'add a top-level setting (speed / bpm / fps / audio response / render)')
+            addSet.onclick = () => this.openItemsMenu(d, root, addSet, this.addSettingItems())
+            addRow.appendChild(addSet)
         }
         body.appendChild(addRow)
         root.appendChild(body)
@@ -1616,7 +1632,8 @@ export default class VJPanel {
     renderStatement(d, root, stmt) {
         if (stmt.kind === 'chain') return this.renderStrip(d, root, stmt)
         if (stmt.kind === 'render') return this.renderRenderRow(d, stmt)
-        if (stmt.kind === 'setup' && (stmt.sub === 'speed' || stmt.sub === 'bpm')) return this.renderGlobalRow(d, stmt)
+        if (stmt.kind === 'setup' && GLOBAL_SETTINGS[stmt.sub]) return this.renderGlobalRow(d, stmt)
+        if (stmt.kind === 'setup' && stmt.sub === 'update') return this.renderUpdateRow(d, stmt)
         if (stmt.kind === 'setup' && stmt.sub === 'audioSet' && AUDIO_SETTINGS[stmt.fn]) return this.renderAudioSetRow(d, stmt)
         if (stmt.kind === 'setup' && stmt.sub === 'sourceInit' && SOURCE_FNS[stmt.fn]) return this.renderSourceRow(d, stmt)
         return this.renderRawRow(d, stmt)
@@ -1709,7 +1726,7 @@ export default class VJPanel {
         if (this.midi.isLearning(stmt.arg.path)) track.classList.add('vj-learning')
         rowEl.oncontextmenu = (e) => {
             e.preventDefault()
-            this.openSetupMenu(d, this.hostRootFor(rowEl), track, stmt.arg)
+            this.openSetupMenu(d, this.hostRootFor(rowEl), track, stmt.arg, stmt)
         }
         this.attachValueEdit(d, valueEl, {
             get: () => current,
@@ -1730,10 +1747,8 @@ export default class VJPanel {
         return rowEl
     }
 
-    // FFT button right-click: audio-setting rows the sketch doesn't have yet,
-    // plus (on remote decks against a caps-aware relay) the a.fft source
-    // selector and the display quality tier
-    openAudioMenu(d, root, anchor) {
+    // the a.setX() rows the sketch doesn't have yet, as insert menu items
+    audioSetAddItems() {
         const stmts = (this.model && this.model.statements) || []
         const items = []
         Object.entries(AUDIO_SETTINGS).forEach(([fn, meta]) => {
@@ -1743,6 +1758,43 @@ export default class VJPanel {
                 fn: () => this.apply({ from: 0, to: 0, text: `a.${fn}(${fmtNumber(meta.def)})\n` })
             })
         })
+        return items
+    }
+
+    // every top-level setting the sketch doesn't have yet — the grey rows
+    // (speed / bpm / fps / audio response / render) become addable like
+    // chains and sources
+    addSettingItems() {
+        const stmts = (this.model && this.model.statements) || []
+        const items = []
+        Object.entries(GLOBAL_SETTINGS).forEach(([name, meta]) => {
+            const present = stmts.some((s) => s.kind === 'setup' &&
+                (s.sub === name || (s.sub === 'update' && s.binds.some((b) => b.name === name))))
+            if (present) return
+            items.push({
+                label: '+ ' + name,
+                fn: () => this.apply({ from: 0, to: 0, text: `${name} = ${fmtNumber(meta.def)}\n` })
+            })
+        })
+        items.push(...this.audioSetAddItems())
+        if (!stmts.some((s) => s.kind === 'render')) {
+            items.push({
+                label: '+ render',
+                fn: () => {
+                    const text = this.model ? this.model.text : this.host.getCode()
+                    const sep = !text || text.endsWith('\n') ? '' : '\n'
+                    this.apply({ from: text.length, to: text.length, text: `${sep}render(o0)\n` })
+                }
+            })
+        }
+        return items
+    }
+
+    // FFT button right-click: audio-setting rows the sketch doesn't have yet,
+    // plus (on remote decks against a caps-aware relay) the a.fft source
+    // selector and the display quality tier
+    openAudioMenu(d, root, anchor) {
+        const items = this.audioSetAddItems()
         const fftState = this.host.remote ? this.host.fftState : null
         if (fftState && this.host.caps && this.host.caps.includes('fft2')) {
             const sources = [
@@ -2370,10 +2422,69 @@ export default class VJPanel {
         return items
     }
 
-    // right-click on a speed/bpm/audio-setting fader: MIDI only — no fft or
-    // mouse binds, those globals must stay plain numbers
-    openSetupMenu(d, root, anchor, arg) {
-        this.openItemsMenu(d, root, anchor, this.midiMenuItems(d, root, anchor, arg))
+    // right-click on a speed/bpm/fps/audio-setting fader: MIDI plus — for the
+    // synth globals — audio/mouse binding via hydra's update hook. The synth
+    // reads these globals as plain NUMBERS every tick, so the binding can't
+    // be an arrow in place (that would NaN the clock); instead the value line
+    // becomes an assignment inside `update = () => { … }`, which hydra runs
+    // once per frame. audioSet rows stay MIDI-only (a per-frame setter call
+    // driven by its own fft output would feed back on itself).
+    openSetupMenu(d, root, anchor, arg, stmt) {
+        const items = this.midiMenuItems(d, root, anchor, arg)
+        if (stmt && GLOBAL_SETTINGS[stmt.sub]) {
+            items.push({
+                label: this.tr('panel.bind-audio', 'bind to audio (fft)'),
+                fn: () => this.bindGlobal(stmt, 'audio')
+            })
+            items.push({
+                label: this.tr('panel.bind-mouse', 'bind to mouse'),
+                fn: () => this.bindGlobal(stmt, 'mouse')
+            })
+        }
+        this.openItemsMenu(d, root, anchor, items)
+    }
+
+    // turn `speed = 0.7` into an update-hook binding, joining the existing
+    // update block when one is already there (one block holds all bindings)
+    bindGlobal(stmt, kind) {
+        const scale = fmtNumber(Math.max(Math.abs(stmt.arg.value) * 2, 0.5))
+        const expr = kind === 'audio'
+            ? `${stmt.sub} = a.fft[0] * ${scale}`
+            : `${stmt.sub} = mouse.x / width * ${scale}`
+        const text = this.model.text
+        const upd = (this.model.statements || []).find((s) => s.kind === 'setup' && s.sub === 'update')
+        if (upd) {
+            this.apply(edits.composed(text, [
+                edits.removeStatement(stmt, text),
+                { from: upd.bodyInnerEnd, to: upd.bodyInnerEnd, text: `  ${expr}\n` }
+            ]))
+        } else {
+            this.apply({ from: stmt.range[0], to: stmt.range[1], text: `update = () => {\n  ${expr}\n}` })
+        }
+    }
+
+    // dissolve one update binding back into a plain `name = N` line, frozen
+    // at the value the global carries right now; the last binding takes the
+    // whole update block with it
+    unbindGlobal(stmt, bind) {
+        const meta = GLOBAL_SETTINGS[bind.name] || { def: 1 }
+        const now = this.host.getGlobal(bind.name)
+        const val = fmtNumber(typeof now === 'number' && isFinite(now) ? now : meta.def)
+        const text = this.model.text
+        if (stmt.binds.length === 1) {
+            this.apply({ from: stmt.range[0], to: stmt.range[1], text: `${bind.name} = ${val}` })
+            return
+        }
+        // eat the whole assignment line inside the block (indent + trailing ;/newline)
+        let from = bind.stmtRange[0]
+        let to = bind.stmtRange[1]
+        while (to < text.length && (text[to] === ';' || text[to] === ' ' || text[to] === '\t')) to++
+        if (text[to] === '\n') to++
+        while (from > 0 && (text[from - 1] === ' ' || text[from - 1] === '\t')) from--
+        this.apply(edits.composed(text, [
+            { from: 0, to: 0, text: `${bind.name} = ${val}\n` },
+            { from, to, text: '' }
+        ]))
     }
 
     // right-click on a ghost fader (a default the code omits): the MIDI items
@@ -2649,6 +2760,8 @@ export default class VJPanel {
         unbind.appendChild(el(d, 'i', 'fas fa-times'))
         unbind.title = spec.unbindTitle
         unbind.onclick = () => {
+            // update-hook bindings dissolve through the block, not in place
+            if (spec.unbind) return spec.unbind()
             const fallback = typeof input.default === 'number' && isFinite(input.default) ? input.default : 0.5
             this.apply({ from: arg.range[0], to: arg.range[1], text: fmtNumber(fallback) })
         }
@@ -2711,8 +2824,11 @@ export default class VJPanel {
         return wrap
     }
 
-    // () => a.fft[n] * scale + offset -> boxed bin picker + scale/offset rows
-    renderAudioBind(d, input, arg) {
+    // () => a.fft[n] * scale + offset -> boxed bin picker + scale/offset rows.
+    // `up` marks an update-hook binding ({stmt, bind}): the expression is
+    // bare (hydra's per-frame update call replaces the arrow) and unbinding
+    // goes through the block
+    renderAudioBind(d, input, arg, up) {
         const state = {
             bin: arg.bin,
             scale: arg.scale ? arg.scale.value : 1,
@@ -2723,7 +2839,8 @@ export default class VJPanel {
             icon: '∿',
             iconCls: 'vj-audio-icon',
             state,
-            base: (s) => `() => a.fft[${s.bin}]`,
+            base: (s) => (arg.bare ? '' : '() => ') + `a.fft[${s.bin}]`,
+            unbind: up ? () => this.unbindGlobal(up.stmt, up.bind) : null,
             unbindTitle: this.tr('panel.unbind-audio', 'remove the audio binding'),
             buildSelect: (rewrite) => {
                 const sel = el(d, 'select', 'vj-refselect')
@@ -2741,7 +2858,7 @@ export default class VJPanel {
     }
 
     // () => mouse.x / width * scale + offset -> boxed axis picker + scale/offset rows
-    renderMouseBind(d, input, arg) {
+    renderMouseBind(d, input, arg, up) {
         const state = {
             axis: arg.axis,
             norm: arg.norm,
@@ -2753,8 +2870,9 @@ export default class VJPanel {
             icon: '☩',
             iconCls: 'vj-audio-icon vj-mouse-icon',
             state,
-            base: (s) => `() => mouse.${s.axis}` +
+            base: (s) => (arg.bare ? '' : '() => ') + `mouse.${s.axis}` +
                 (s.norm ? ` / ${s.axis === 'x' ? 'width' : 'height'}` : ''),
+            unbind: up ? () => this.unbindGlobal(up.stmt, up.bind) : null,
             unbindTitle: this.tr('panel.unbind-mouse', 'remove the mouse binding'),
             buildSelect: (rewrite) => {
                 const sel = el(d, 'select', 'vj-refselect')
@@ -2861,7 +2979,7 @@ export default class VJPanel {
         let current = stmt.arg.value
         const track = this.makeFader(d, {
             get: () => current,
-            ref: stmt.sub === 'bpm' ? 30 : 1, // unity/default tempo sits mid-track
+            ref: GLOBAL_SETTINGS[stmt.sub].ref, // unity/default tempo sits mid-track
             live: (v) => {
                 current = v
                 valueEl.textContent = fmtShort(v)
@@ -2883,7 +3001,7 @@ export default class VJPanel {
         if (this.midi.isLearning(stmt.arg.path)) track.classList.add('vj-learning')
         rowEl.oncontextmenu = (e) => {
             e.preventDefault()
-            this.openSetupMenu(d, this.hostRootFor(rowEl), track, stmt.arg)
+            this.openSetupMenu(d, this.hostRootFor(rowEl), track, stmt.arg, stmt)
         }
         this.attachValueEdit(d, valueEl, {
             get: () => current,
@@ -2897,6 +3015,26 @@ export default class VJPanel {
         rowEl.appendChild(track)
         rowEl.appendChild(valueEl)
         return rowEl
+    }
+
+    // update = () => { speed = a.fft[0] * 2 … } — one setup row per bound
+    // global, each holding the full bind box (source picker, scale, offset).
+    // The binding lives in the sketch text, so it survives reloads, travels
+    // with scenes/URLs, and needs nothing from the deck at runtime.
+    renderUpdateRow(d, stmt) {
+        const wrap = el(d, 'div', 'vj-update-rows')
+        stmt.binds.forEach((bind) => {
+            const rowEl = el(d, 'div', 'vj-setup-row vj-updatebind-row')
+            rowEl.appendChild(el(d, 'label', 'vj-label', bind.name))
+            const meta = GLOBAL_SETTINGS[bind.name] || { def: 1 }
+            const input = { default: meta.def }
+            const box = bind.arg.kind === 'audioBind'
+                ? this.renderAudioBind(d, input, bind.arg, { stmt, bind })
+                : this.renderMouseBind(d, input, bind.arg, { stmt, bind })
+            rowEl.appendChild(box)
+            wrap.appendChild(rowEl)
+        })
+        return wrap
     }
 
     renderRawRow(d, stmt) {

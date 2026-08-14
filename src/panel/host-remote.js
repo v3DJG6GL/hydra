@@ -46,7 +46,7 @@ export default class RemoteHost {
         this.hist = { undo: 0, redo: 0 }
         this.scenes = new Array(8).fill(null)
         this.transforms = null
-        this.globals = { speed: 1, bpm: 30 }
+        this.globals = { speed: 1, bpm: 30, fps: 30 }
         this.showCode = true
         this.caps = [] // relay feature flags from welcome (pair, fft2, diag)
         this.fftState = null // {mode, active, sourceDeckId, bins} from the host

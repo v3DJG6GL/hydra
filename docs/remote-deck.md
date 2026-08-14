@@ -233,6 +233,32 @@ right-click does on the desktop lives behind a **long-press** on touch:
 - **Hold a module's title bar (~⅓s)** to lift it for reorder; a plain
   sideways drag on the title bar pans the chain instead.
 
+## Top-level settings (the grey rows)
+
+The grey rows above the chains — `speed`, `bpm`, `fps`, the `a.set…`
+audio-response settings and the `render(oN)` pick — are regular deck
+rows: faders with a right-click/long-press menu. Any of them the sketch
+doesn't have yet can be added from **+ setting** at the bottom of the
+deck, next to *new chain* and *source*.
+
+**Binding a global to audio or mouse**: right-click/long-press the
+speed / bpm / fps fader → *bind to audio (fft)* or *bind to mouse*. The
+synth reads these globals as plain numbers every tick, so the deck can't
+splice an arrow into their line the way it does for chain parameters —
+instead the line becomes an assignment inside hydra's per-frame `update`
+hook:
+
+    update = () => {
+      speed = a.fft[0] * 1.4
+    }
+
+The row turns into the familiar bind box (fft-bin / axis picker, scale
+and offset faders, all MIDI-learnable). All bound globals share one
+`update` block; it lives in the sketch text, so it travels with scenes,
+URLs and remote decks and keeps working without the deck entirely. The
+✕ on the box dissolves the binding back into a plain `speed = N` row,
+frozen at the value the global carried at that moment.
+
 ## MIDI control
 
 Web MIDI needs a secure context: WAN/https decks, or the renderer machine

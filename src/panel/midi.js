@@ -604,6 +604,9 @@ export default class MidiControl {
     _pathDesc(path) {
         const paren = path.lastIndexOf(')')
         if (paren === -1) {
+            let m
+            // 's0.up.speed.scale' -> 'speed · scale' (update-hook binding)
+            if ((m = /^s\d+\.up\.(\w+)(?:\.(\w+))?$/.exec(path))) return [m[1], m[2]].filter(Boolean).join(' · ')
             const s = /^s\d+\.(\w+)$/.exec(path)
             return s ? s[1] : path
         }

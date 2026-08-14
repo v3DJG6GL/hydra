@@ -86,6 +86,21 @@ export const edits = {
         while (to < text.length && (text[to] === ';' || text[to] === ' ' || text[to] === '\t')) to++
         if (text[to] === '\n') to++
         return { from: stmt.range[0], to, text: '' }
+    },
+
+    // several non-overlapping splices composed into ONE edit (single undo
+    // step, single eval): the covered span is reassembled around the parts
+    composed(text, parts) {
+        const sorted = [...parts].sort((a, b) => a.from - b.from)
+        const from = sorted[0].from
+        const to = sorted[sorted.length - 1].to
+        let out = ''
+        let pos = from
+        for (const p of sorted) {
+            out += text.slice(pos, p.from) + p.text
+            pos = p.to
+        }
+        return { from, to, text: out + text.slice(pos, to) }
     }
 }
 

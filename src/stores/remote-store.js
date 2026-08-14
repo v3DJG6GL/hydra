@@ -104,7 +104,8 @@ export default function remoteStore(state, emitter) {
 
     const globals = () => ({
         speed: typeof window.speed === 'number' ? window.speed : 1,
-        bpm: typeof window.bpm === 'number' ? window.bpm : 30
+        bpm: typeof window.bpm === 'number' ? window.bpm : 30,
+        fps: typeof window.fps === 'number' ? window.fps : 30
     })
 
     const fftState = () => ({ ...fftBus.state(), sourceDeckId: fftSourceDeckId })
@@ -260,7 +261,7 @@ export default function remoteStore(state, emitter) {
                 return
             }
             case 'global':
-                if (msg.name === 'speed' || msg.name === 'bpm') window[msg.name] = msg.value
+                if (msg.name === 'speed' || msg.name === 'bpm' || msg.name === 'fps') window[msg.name] = msg.value
                 return
             case 'audio':
                 p.host.audioCall(String(msg.fn), msg.value)
