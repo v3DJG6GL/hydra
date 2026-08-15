@@ -280,7 +280,8 @@ const PROBES = [
     },
     {
         id: 'P6', title: 'Grab a few knobs and move them',
-        q: 'While grabbing: TOUCH lines appear in the monitor AND your normal knob CCs still arrive?',
+        q: 'While grabbing: TOUCH lines appear in the monitor AND CCs from the DAW port (ch 16) arrive? ' +
+            '(Custom-mode CCs on the MIDI port stay silent in DAW mode — that is normal.)',
         run: async () => { rep('P6: user grabbing controls — watch monitor for TOUCH + custom CCs') }
     },
     {

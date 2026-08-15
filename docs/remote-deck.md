@@ -320,21 +320,23 @@ LED echoes there read as a DAW connecting and can flip the device into
 a DAW protocol mode.
 
 **Novation Launch Control XL 3** gets a native LED driver instead of
-echoes: the deck enters DAW mode over the DAW port and colours physical
-controls directly, so each mapped encoder or fader lights **in the same
-palette colour as its tag on the deck** on an otherwise dark board.
-While LEDs are enabled the device's screen shows the DAW *Mixer* label —
-that's expected, and your custom mode keeps sending its CCs the whole
-time, so nothing changes on the deck side. (Hardware probing showed the
-documented "re-select the custom mode inside DAW mode" step actually
-kills LED painting and wedges DAW-mode re-entry until a power cycle, so
-the driver deliberately stays on the Mixer surface.) The deck learns
-which physical control carries a CC through the XL3's touch events —
-with LEDs enabled, simply grab each mapped knob/fader once and its LED
-takes its colour. Turning the option off (or closing the deck) exits
-DAW mode, which repaints your custom mode and hands the LEDs back. The
-two 16-button rows send no touch events, so their LEDs stay
-device-driven.
+echoes. LED control only exists in the XL3's DAW mode, and DAW mode
+changes what the hardware *is*: the whole surface reports on the DAW
+port (encoders and faders as CCs on channel 16, buttons on channel 1)
+while your custom mode goes silent. So with LEDs enabled the deck
+treats the XL3 as that DAW surface — learn and drive work off those
+CCs, and because a control's CC number doubles as its LED index there,
+**a control lights in its deck tag colour the moment you learn it** on
+an otherwise dark board, no grabbing required. The device's screen
+showing the DAW *Mixer* label is expected. Mappings made in your
+custom mode are a separate vocabulary — they don't fire while the DAW
+surface is up, so re-learn rows once with LEDs on. Pressing the
+device's **Mode** button flips the surface back to your custom mode at
+any time: the deck follows the mode report, pauses painting (the
+device drives its own LEDs there), and your standalone mappings work
+again; flip back and the deck repaints. Turning the option off (or
+closing the deck) exits DAW mode entirely and the device repaints its
+custom mode.
 
 **MIDI hardware debugging**: the deck ships a standalone probe console
 at `/midi-debug.html` (same origin as the deck). It lists ports, live-

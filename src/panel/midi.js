@@ -204,25 +204,27 @@ export default class MidiControl {
 
     // ---- Launch Control XL 3 LED driver (over its DAW port) --------------
     // In standalone custom modes the XL3 drives its own LEDs and ignores
-    // echoes on the MIDI port. The road that works on real firmware
-    // (midi-debug probe report, 2026-08): enter DAW mode on the DAW port
-    // (9F 0C 7F) — the surface swaps to DAW Mixer with every pot/button
-    // LED dark — then colour any physical control with B0 <index>
-    // <palette colour> (encoders 13-36, faders 5-12, button rows 37-52).
-    // The custom mode keeps streaming its CCs on the MIDI port the whole
-    // time, so the deck stays fully controllable. WHICH physical control
-    // carries a learned CC is discovered through touch events (B6 47 7F
-    // enables; touching sends BE <index> 7F on the DAW port): grabbing a
-    // mapped knob while its custom CC streams ties the two together
-    // (m.pi), persisted with the mapping. Exiting DAW mode (9F 0C 00)
-    // hands the LEDs back to the device and repaints the custom mode.
+    // echoes on the MIDI port; LED control only exists in DAW mode. And
+    // DAW mode (9F 0C 7F on the DAW port; 9F 0C 00 exits) changes what
+    // the hardware IS: the whole surface reports as plain CCs on the DAW
+    // port — encoders/faders on ch 16, buttons on ch 1 — while the custom
+    // mode goes silent (programmer's reference, "The surface in DAW
+    // mode"). So with LEDs enabled the deck speaks DAW surface: those CCs
+    // feed the normal learn/drive path, and a control's CC number doubles
+    // as its LED index — B0 <index> <palette colour> (faders 5-12,
+    // encoders 13-36, button rows 37-52) — so a control learned over the
+    // DAW port lights the moment it's learned, no discovery dance (m.xd
+    // marks such mappings; touch-tied m.pi remains for anything else).
+    // Surface-mode reports (B6 1E) are followed, never sent: flipping the
+    // device's Mode button to a custom surface (6+) pauses painting (the
+    // device owns its LEDs there) and the user's standalone mappings
+    // stream again; back on a DAW surface (1/2) the deck repaints.
     //
-    // NEVER re-select the custom mode over the DAW port (B6 1E) while the
-    // DAW-mode note-on is latched — the programmer's-reference road. On
-    // real hardware it half-exits DAW mode: LED writes stop painting and
-    // 9F 0C 7F is refused until the device is power-cycled (probe P2 vs
-    // the P2-skipped run). The Mixer label on the device's screen is the
-    // price of working LEDs.
+    // NEVER send a surface select (B6 1E) while the DAW-mode note-on is
+    // latched — the reference suggests it, but on real hardware it
+    // half-exits DAW mode: LED writes stop painting and 9F 0C 7F is
+    // refused until the device is power-cycled (probe P2 vs the
+    // P2-skipped run, 2026-08).
 
     _xl3DawOuts() {
         const outs = []
@@ -234,19 +236,38 @@ export default class MidiControl {
     }
 
     _xl3State() {
-        if (!this._xl3) this._xl3 = { on: false, touch: null, lit: new Map() }
+        if (!this._xl3) this._xl3 = { on: false, surface: 1, touch: null, lit: new Map() }
         return this._xl3
     }
 
-    // DAW-port traffic: touch events (surface-mode reports arrive here too
-    // but are deliberately ignored — see the driver note above). Kept away
-    // from onMessage so DAW-mode ACKs (note-ons on ch 16) can't complete a
-    // pad learn or drive a mapping.
+    // DAW-port traffic. Handshake/report messages are consumed here (mode
+    // ACKs are note-ons on ch 16 — those must never complete a pad learn),
+    // touch and surface reports update driver state, and the DAW surface's
+    // own CC stream is handed to the normal learn/drive path.
     _onXl3Daw(data) {
         const [status, d1, d2] = data
         const x = this._xl3State()
         // BE <index> <127|0>: encoder/fader touch on channel 15
-        if (status === 0xbe && d2 > 0) x.touch = { idx: d1, t: Date.now() }
+        if (status === 0xbe) {
+            if (d2 > 0) x.touch = { idx: d1, t: Date.now() }
+            return
+        }
+        // B6 1E <mode>: surface-mode report — follow the user's Mode
+        // button. On a custom surface the device drives its own LEDs, so
+        // painting pauses; back on a DAW surface (1/2) repaint in full.
+        if (status === 0xb6) {
+            if (d1 === 0x1e && d2 > 0) {
+                const back = d2 < 6 && x.surface >= 6
+                x.surface = d2
+                if (back && x.on) setTimeout(() => this._xl3Sync(true), 500)
+            }
+            return // remaining ch-7 traffic: feature ACKs, shift button
+        }
+        // the DAW surface reports as plain CCs (encoders/faders ch 16,
+        // buttons ch 1): that IS the hardware while LEDs are on, so it
+        // learns and drives like any controller. Only the CC family passes
+        // — the ch-16 note-ons (DAW-mode ACKs) never reach a learn.
+        if ((status & 0xf0) === 0xb0 && x.on) this.onMessage(data, { xl3daw: true })
     }
 
     // a control message arrived for this mapping while a finger is (just)
@@ -265,7 +286,9 @@ export default class MidiControl {
         if (!outs.length || this._xl3State().on) return
         const send = (msg) => outs.forEach((o) => { try { o.send(msg) } catch (e) { /* closed */ } })
         const pause = (ms) => new Promise((r) => setTimeout(r, ms))
-        this._xl3State().on = true
+        const x = this._xl3State()
+        x.on = true
+        x.surface = 1 // DAW-mode entry lands on the DAW Mixer surface
         // hand the LEDs back if the deck goes away mid-session
         if (typeof window !== 'undefined' && !this._xl3Bye) {
             this._xl3Bye = true
@@ -295,14 +318,18 @@ export default class MidiControl {
     _xl3Sync(full) {
         const x = this._xl3
         if (!x || !x.on) return
+        if (x.surface >= 6) return // custom surface up: the device owns its LEDs
         const outs = this._xl3DawOuts()
         if (!outs.length) return
         const send = (msg) => outs.forEach((o) => { try { o.send(msg) } catch (e) { /* closed */ } })
         const want = new Map()
         for (const [path, m] of Object.entries(this.mappings.params)) {
-            if (m.pi === undefined || !this._resolves(path)) continue
+            // a mapping learned over the DAW port (m.xd): its CC number IS
+            // the LED index. Anything else needs the touch-tied index.
+            const pi = m.xd ? m.cc : m.pi
+            if (pi === undefined || !this._resolves(path)) continue
             const info = controlInfo(m)
-            want.set(m.pi, MidiControl.XL3_COLORS[(info ? info.color : 0)] || 3)
+            want.set(pi, MidiControl.XL3_COLORS[(info ? info.color : 0)] || 3)
         }
         if (full) {
             // physical controls only (faders 5-12, encoders 13-36, button
@@ -371,8 +398,9 @@ export default class MidiControl {
         this.error = null
         const attach = () => {
             this.access.inputs.forEach((input) => {
-                // DAW ports carry handshake/report traffic (mode ACKs are
-                // note-ons!) — never let it into the learn/drive path
+                // DAW ports get the XL3 driver's handler: it consumes the
+                // handshake/report traffic (mode ACKs are note-ons!) and
+                // forwards only the DAW surface's CC stream to learn/drive
                 if (this._isDawPort(input.name)) {
                     input.onmidimessage = this._isXl3(input.name)
                         ? (e) => this._onXl3Daw(e.data)
@@ -663,11 +691,14 @@ export default class MidiControl {
         }
     }
 
-    // exported separately from the event plumbing so it can be driven in tests
-    onMessage(data) {
+    // exported separately from the event plumbing so it can be driven in
+    // tests. src.xl3daw marks messages from the XL3's DAW surface, whose
+    // CC numbers double as LED indices (see the XL3 driver notes).
+    onMessage(data, src) {
         const [status, d1, d2] = data
         const kind = status & 0xf0
         const ch = status & 0x0f
+        const xd = src && src.xl3daw ? { xd: 1 } : {}
         if (kind === 0x90 && d2 > 0) { // note on: pads and buttons
             const key = `n${d1}c${ch}`
             if (this.learning && !this._skipsLearn(this.learning, { note: d1 }, ch)) {
@@ -713,7 +744,7 @@ export default class MidiControl {
                 this._finishLearn(l, { cc: d1 }, ch, () => {
                     this._releaseControl({ cc: d1 }, ch)
                     // no range — the knob drives the value relatively, like the fader
-                    this.mappings.params[l.path] = { cc: d1, ch }
+                    this.mappings.params[l.path] = { cc: d1, ch, ...xd }
                 })
             } else if (d2 > 0) {
                 // an explicit button learn (mute/unmute, mute-while-held)
@@ -724,7 +755,7 @@ export default class MidiControl {
                 const v0 = arg ? arg.value : (isFinite(l.hint) ? l.hint : 0)
                 this._finishLearn(l, { cc: d1 }, ch, () => {
                     this._releaseControl({ cc: d1 }, ch)
-                    this.mappings.params[l.path] = { cc: d1, ch, mode: l.mode, on: v0 || 1 }
+                    this.mappings.params[l.path] = { cc: d1, ch, mode: l.mode, on: v0 || 1, ...xd }
                 })
             }
             return
